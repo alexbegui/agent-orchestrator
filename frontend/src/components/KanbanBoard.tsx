@@ -13,17 +13,18 @@ const COLUMNS: { id: TaskStatus; label: string; dotColor: string }[] = [
   { id: 'RUNNING', label: '3. Em Execução (Worktree)', dotColor: 'bg-blue-500' },
   { id: 'REVIEW_READY', label: '4. Aguardando Revisão', dotColor: 'bg-amber-500' },
   { id: 'DONE', label: '5. Concluído & Mergeado', dotColor: 'bg-emerald-500' },
+  { id: 'FAILED', label: '6. Falhou / Erro', dotColor: 'bg-rose-500' },
 ];
 
 export const KanbanBoard: React.FC<KanbanBoardProps> = ({ tasks, onSelectTask }) => {
   return (
-    <div className="flex gap-4 min-w-[1100px] h-[calc(100vh-140px)] pb-2 overflow-x-auto custom-scroll">
+    <div className="flex gap-4 min-w-[1250px] h-[calc(100vh-140px)] pb-2 overflow-x-auto custom-scroll">
       {COLUMNS.map((col) => {
         const colTasks = tasks.filter((t) => t.status === col.id);
         return (
           <div
             key={col.id}
-            className="flex-1 flex flex-col bg-[#12141c] border border-[#262a3b] rounded-xl p-3 min-w-[220px]"
+            className="flex-1 flex flex-col bg-[#12141c] border border-[#262a3b] rounded-xl p-3 min-w-[210px]"
           >
             <div className="flex items-center justify-between mb-3 px-1">
               <div className="flex items-center gap-2">

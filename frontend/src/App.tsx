@@ -20,7 +20,7 @@ export default function App() {
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
-  const [newTaskRunner, setNewTaskRunner] = useState('SUBPROCESS_CLI');
+  const [newTaskRunner, setNewTaskRunner] = useState('claude');
 
   // Carrega lista inicial de projetos
   const loadProjects = async () => {
@@ -68,8 +68,8 @@ export default function App() {
       setIsNewProjectModalOpen(false);
       setNewProjectName('');
       setNewProjectPath('');
-    } catch (err) {
-      alert('Erro ao criar projeto. Verifique o caminho.');
+    } catch (err: any) {
+      alert(`Erro ao criar projeto: ${err.message || 'Verifique o caminho do diretório Git'}`);
     }
   };
 
@@ -77,14 +77,20 @@ export default function App() {
     e.preventDefault();
     if (!activeProjectId || !newTaskTitle || !newTaskPrompt) return;
     try {
-      const created = await api.createTask(activeProjectId, newTaskTitle, newTaskPrompt, newTaskRunner);
+      const created = await api.createTask(
+        activeProjectId,
+        newTaskTitle,
+        newTaskPrompt,
+        'SUBPROCESS_CLI',
+        { cli: newTaskRunner }
+      );
       setTasks((prev) => [...prev, created]);
       setIsNewTaskModalOpen(false);
       setNewTaskTitle('');
       setNewTaskPrompt('');
       setSelectedTask(created);
-    } catch (err) {
-      alert('Erro ao criar tarefa.');
+    } catch (err: any) {
+      alert(`Erro ao criar tarefa: ${err.message || 'Falha na requisição'}`);
     }
   };
 
@@ -269,9 +275,9 @@ export default function App() {
                   onChange={(e) => setNewTaskRunner(e.target.value)}
                   className="w-full bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                 >
-                  <option value="SUBPROCESS_CLI">Claude Code CLI (Local)</option>
-                  <option value="SUBPROCESS_CLI">Antigravity (agy / Gemini Local)</option>
-                  <option value="DIRECT_API">Direct API (Streaming)</option>
+                  <option value="claude">Claude Code CLI (Local)</option>
+                  <option value="agy">Antigravity (agy / Gemini Local)</option>
+                  <option value="custom">Comando Customizado</option>
                 </select>
               </div>
               <div className="flex justify-end gap-2 pt-2">

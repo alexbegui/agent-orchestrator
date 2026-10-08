@@ -49,6 +49,9 @@ def list_projects(db: Session = Depends(get_db)):
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(data: ProjectCreate, db: Session = Depends(get_db)):
     normalized_path = os.path.abspath(data.root_path)
+    if not os.path.isdir(normalized_path):
+        raise HTTPException(status_code=400, detail="Diretório informado não existe no disco.")
+
     proj = Project(
         name=data.name,
         root_path=normalized_path,

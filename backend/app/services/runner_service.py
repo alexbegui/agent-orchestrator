@@ -1,5 +1,6 @@
 import os
 import sys
+import shutil
 import asyncio
 import subprocess
 from typing import AsyncGenerator, Optional, Union
@@ -13,22 +14,23 @@ class RunnerService:
 
     def __init__(self):
         self.active_processes: dict[str, asyncio.subprocess.Process] = {}
+        self.last_returncodes: dict[str, int] = {}
+        self.stopped_tasks: set[str] = set()
 
     def resolve_cli_command(self, runner_type: str, prompt: str, config: Optional[dict] = None) -> list[str]:
         cfg = config or {}
-        custom_cmd = cfg.get("cli_cmd")
+        cli_choice = (cfg.get("cli") or cfg.get("cli_cmd") or runner_type or "").lower()
 
-        if custom_cmd:
-            return [custom_cmd, prompt]
-
-        runner_lower = runner_type.lower()
-        if "claude" in runner_lower:
-            # Claude Code CLI usa -p para prompts diretos
-            return ["claude", "-p", prompt]
-        elif "agy" in runner_lower or "gemini" in runner_lower:
-            # Antigravity CLI
-            return ["agy", prompt]
+        if "claude" in cli_choice:
+            cmd = shutil.which("claude.cmd") or shutil.which("claude") or "claude"
+            return [cmd, "-p", prompt]
+        elif "agy" in cli_choice or "gemini" in cli_choice:
+            cmd = shutil.which("agy.exe") or shutil.which("agy") or "agy"
+            return [cmd, prompt]
+        elif cfg.get("cli_cmd"):
+            return [cfg["cli_cmd"], prompt]
         else:
+            # Fallback caso não seja claude nem agy
             return ["cmd", "/c", prompt]
 
     async def execute_command(
@@ -40,6 +42,7 @@ class RunnerService:
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
+        self.stopped_tasks.discard(task_id)
 
         if isinstance(command, list):
             proc = await asyncio.create_subprocess_exec(
@@ -68,6 +71,7 @@ class RunnerService:
                 line = line_bytes.decode("utf-8", errors="replace")
                 yield line
             await proc.wait()
+            self.last_returncodes[task_id] = proc.returncode
         except asyncio.CancelledError:
             self.stop_task(task_id)
             raise
@@ -75,13 +79,13 @@ class RunnerService:
             self.active_processes.pop(task_id, None)
 
     def stop_task(self, task_id: str) -> bool:
+        self.stopped_tasks.add(task_id)
         proc = self.active_processes.get(task_id)
         if not proc:
             return False
 
         try:
             if sys.platform == "win32":
-                # Encerra toda a árvore de processos no Windows
                 subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                     capture_output=True,
@@ -94,3 +98,9 @@ class RunnerService:
 
         self.active_processes.pop(task_id, None)
         return True
+
+    def was_stopped(self, task_id: str) -> bool:
+        return task_id in self.stopped_tasks
+
+    def get_last_returncode(self, task_id: str) -> Optional[int]:
+        return self.last_returncodes.get(task_id)

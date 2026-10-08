@@ -83,13 +83,13 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
   const handleMergeTask = async () => {
     setLoadingAction(true);
     try {
-      await api.mergeTask(task.id);
+      const res = await api.mergeTask(task.id);
       const updated = { ...task, status: 'DONE' as const };
       onTaskUpdated(updated);
       alert('Branch incorporada com sucesso na main e worktree removida!');
       onClose();
-    } catch (err) {
-      alert('Erro ao realizar merge. Verifique se há conflitos.');
+    } catch (err: any) {
+      alert(`⚠️ Não foi possível efetuar o merge: ${err.message || 'Conflito detectado'}.\nA branch principal permaneceu limpa e sem corrupção.`);
     } finally {
       setLoadingAction(false);
     }

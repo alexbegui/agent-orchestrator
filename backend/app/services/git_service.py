@@ -69,6 +69,24 @@ class GitWorktreeService:
 
     def get_diff(self, project_path: str, task_id: str, base_branch: str = "main") -> str:
         branch = f"task/{task_id}"
+        worktree_path = self.get_worktree_path(project_path, task_id)
+
+        # Se houver alterações não commitadas na worktree, faz auto-snapshot
+        if os.path.exists(worktree_path):
+            try:
+                status_res = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                if status_res.stdout.strip():
+                    self._run_git(["add", "-A"], cwd=worktree_path)
+                    self._run_git(["commit", "-m", "Auto: snapshot uncommitted changes"], cwd=worktree_path)
+            except Exception:
+                pass
+
         try:
             proc = self._run_git(["diff", f"{base_branch}...{branch}"], cwd=project_path)
             return proc.stdout
@@ -89,4 +107,9 @@ class GitWorktreeService:
             self._run_git(["merge", branch, "--no-edit"], cwd=project_path)
             return True
         except subprocess.CalledProcessError:
+            # Em caso de conflito, aborta o merge para manter a main limpa
+            try:
+                self._run_git(["merge", "--abort"], cwd=project_path)
+            except Exception:
+                pass
             return False

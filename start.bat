@@ -18,6 +18,8 @@ if defined HTTP_PROXY (
     )
 )
 
+backend\venv\Scripts\pip.exe install -q -r backend\requirements.txt
+
 echo [3/3] Iniciando aplicacao...
 backend\venv\Scripts\python.exe run.py
 pause

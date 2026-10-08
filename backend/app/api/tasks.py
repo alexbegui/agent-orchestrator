@@ -30,6 +30,7 @@ class TaskCreate(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str
+    auto_run: Optional[bool] = False
 
 
 class TaskResponse(BaseModel):
@@ -125,22 +126,27 @@ async def _run_task_background(task_id: str, project_path: str, command: list[st
                 "content": line.rstrip()
             })
 
-        # Ao finalizar execução com sucesso
+        if runner_service.was_stopped(task_id):
+            return
+
+        rc = runner_service.get_last_returncode(task_id)
+        final_status = TaskStatus.REVIEW_READY if rc == 0 else TaskStatus.FAILED
+
         db = db_session_factory()
         t = db.query(Task).filter(Task.id == task_id).first()
         if t:
-            t.status = TaskStatus.REVIEW_READY
+            t.status = final_status
             db.commit()
         db.close()
 
         await ws_manager.broadcast_task(task_id, {
             "type": "STATUS",
-            "status": "REVIEW_READY"
+            "status": final_status.value
         })
         await ws_manager.broadcast_dashboard({
             "type": "TASK_UPDATED",
             "task_id": task_id,
-            "status": "REVIEW_READY"
+            "status": final_status.value
         })
 
     except Exception as e:
@@ -226,7 +232,7 @@ def get_task_messages(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{task_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
-def send_task_message(task_id: str, data: MessageCreate, db: Session = Depends(get_db)):
+def send_task_message(task_id: str, data: MessageCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
@@ -237,6 +243,20 @@ def send_task_message(task_id: str, data: MessageCreate, db: Session = Depends(g
         content=data.content
     )
     db.add(msg)
+    
+    # Se a tarefa estiver em revisão ou auto_run solicitado, re-executa o agente com o feedback
+    if data.auto_run or task.status == TaskStatus.REVIEW_READY:
+        task.status = TaskStatus.RUNNING
+        cmd = runner_service.resolve_cli_command(task.runner_type.value, data.content, task.runner_config)
+        from app.core.database import SessionLocal
+        background_tasks.add_task(
+            _run_task_background,
+            task.id,
+            task.project.root_path,
+            cmd,
+            SessionLocal
+        )
+
     db.commit()
     db.refresh(msg)
     return msg
