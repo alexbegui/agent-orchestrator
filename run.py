@@ -14,6 +14,12 @@ if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
 
+# Configura codificação UTF-8 segura no Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 def open_browser():
     time.sleep(1.2)
     print("\n[Orchestrator] Abrindo painel no navegador: http://localhost:8000 ...")
@@ -26,8 +32,9 @@ if __name__ == "__main__":
 
     threading.Thread(target=open_browser, daemon=True).start()
     print("=======================================================")
-    print("        🚀 AGENT ORCHESTRATOR — SERVIDOR ATIVO")
+    print("        [ORCHESTRATOR] SERVIDOR ATIVO")
     print("        Painel Web Local: http://localhost:8000")
-    print("        Documentação API: http://localhost:8000/docs")
+    print("        Documentacao API: http://localhost:8000/docs")
     print("=======================================================\n")
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
+
