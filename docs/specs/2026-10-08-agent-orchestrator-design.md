@@ -160,22 +160,62 @@ O sistema é composto por um **Backend Reativo em Python** e um **Frontend Moder
 
 ---
 
-## 7. Estrutura de Diretórios e Execução
+## 7. Configuração de Modelos, CLIs Locais e Economia de Tokens
+
+### 7.1 Configuração de CLIs Locais (Gemini agy e Claude Code)
+O usuário pode alternar ou escolher qual motor executará cada tarefa:
+* **Detecção Automática no Windows:** O backend verifica se `claude.cmd` (Claude Code) e `agy.exe` (Antigravity CLI) estão presentes no `PATH` do sistema operacional.
+* **Configuração no Painel (Settings):**
+  * `CLAUDE_PATH`: caminho customizado caso não esteja no PATH (ex: `%APPDATA%\npm\claude.cmd`).
+  * `AGY_PATH`: caminho do executável do Antigravity CLI.
+  * `API_KEYS`: chaves opcionais para chamadas diretas via API (Anthropic, Gemini, OpenAI).
+* **Seletor por Tarefa:** Cada card possui um dropdown onde o usuário escolhe:
+  1. *Claude Code CLI (Local)*
+  2. *Antigravity CLI (Gemini Local)*
+  3. *Direct API (Claude 3.5 Sonnet / Gemini 2.5)*
+
+### 7.2 Engenharia de Economia Máxima de Tokens
+1. **Prompt Caching Estratégico:**
+   * A estrutura dos prompts enviados para os agentes separa a parte estática (regras de sistema, skills selecionadas) na frente da mensagem. Provedores modernos (Claude e Gemini) aplicam **Prompt Caching**, gerando economia de até **70% a 90%** dos tokens lidos em rodadas consecutivas de feedback.
+2. **Context Pruning (Contexto Mínimo Viável):**
+   * O orquestrador nunca injeta a árvore inteira do repositório no contexto do agente. A etapa de *Prompt Refiner* identifica e passa apenas os 2 a 5 arquivos diretamente afetados pela tarefa.
+3. **Compressão de Saída (Output Compression):**
+   * O código modificado é gravado diretamente no sistema de arquivos do *worktree*. O histórico de chat da conversa grava apenas um sumário atômico (ex: `walkthrough.md` com 3 tópicos e lista de arquivos alterados), evitando inchaço desnecessário de tokens.
+4. **Harness & Gestão Seletiva de Skills:**
+   * O projeto conta com uma biblioteca de skills modulares (ex: `ui-ux-pro-max`, `test-driven-development`, `fastapi-standards`).
+   * **Injeção sob demanda:** Apenas as skills relevantes para aquela tarefa específica são anexadas ao prompt, evitando o desperdício de dezenas de milhares de tokens com instruções desnecessárias.
+
+---
+
+## 8. Central de Artefatos do Projeto
+
+Cada tarefa gera e vincula seus próprios artefatos de forma rastreável:
+* **Diffs Unificados (`git.diff`):** Linhas adicionadas e removidas prontas para inspeção.
+* **Mockups & Imagens:** Telas geradas em HTML ou imagens renderizadas visíveis em galeria integrada.
+* **Logs de Execução (`execution.log`):** Saída completa do terminal gravada em arquivo independente do chat.
+* **Sumários de Entrega (`walkthrough.md`):** Relatório de validação e testes executados.
+
+---
+
+## 9. Estrutura de Diretórios e Execução
 
 O projeto reside em `C:\Users\alex.asbp\.gemini\antigravity\scratch\agent-orchestrator`:
 * `backend/`: FastAPI, SQLAlchemy/SQLite, Pydantic, WebSockets, Git Service, Runner Service.
 * `frontend/`: React, Vite, Tailwind CSS, Lucide Icons, Kanban, Diff Viewer, Task Drawer.
+* `docs/mockups/`: Protótipo visual em HTML e especificações de interface.
 * `run.py` / `start.bat`: Scripts de inicialização automática em 1 clique para o Windows.
 
 ---
 
-## 8. Estratégia de Testes
+## 10. Estratégia de Testes
 
 * **Testes Automatizados Backend (`pytest`):**
   * Teste do ciclo de vida da tarefa (`TaskStateMachine`).
   * Teste de criação e remoção de Git Worktrees em repositório temporário.
   * Teste de isolamento de roteamento dos WebSockets.
+  * Teste de detecção e execução de subprocessos locais.
   * Teste de rotas REST e persistência no SQLite.
 * **Testes Frontend:**
   * Build e typecheck (`npm run build`).
   * Renderização de cards no Kanban, navegação por abas e abertura de drawers.
+
