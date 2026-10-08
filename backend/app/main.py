@@ -51,3 +51,13 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect_dashboard(websocket)
+
+
+# Servir Frontend Estático compilado se existir
+import os
+from fastapi.staticfiles import StaticFiles
+
+frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
+if os.path.exists(frontend_dist):
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+
