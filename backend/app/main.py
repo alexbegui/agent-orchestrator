@@ -5,6 +5,7 @@ from app.core.config import settings
 from app.core.database import init_db
 from app.api.projects import router as projects_router
 from app.api.tasks import router as tasks_router
+from app.api.settings import router as settings_router
 from app.websockets.manager import ws_manager
 
 init_db()
@@ -25,6 +26,7 @@ app.add_middleware(
 
 app.include_router(projects_router)
 app.include_router(tasks_router)
+app.include_router(settings_router)
 
 
 @app.get("/api/health")

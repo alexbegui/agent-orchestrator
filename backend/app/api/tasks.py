@@ -299,7 +299,9 @@ async def send_task_message(task_id: str, data: MessageCreate, background_tasks:
         task_prompt=task.raw_prompt,
         history=history,
         project_root=task.project.root_path,
-        user_message=data.content
+        user_message=data.content,
+        project_name=task.project.name,
+        git_branch=task.git_branch
     )
 
     assistant_msg = Message(

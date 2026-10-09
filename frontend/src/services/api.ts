@@ -92,4 +92,20 @@ export const api = {
     });
     return handleResponse<Message>(res);
   },
+
+  // Settings & IA Keys
+  async getSettings(): Promise<{ has_gemini_key: boolean; has_anthropic_key: boolean; gemini_key_preview?: string; anthropic_key_preview?: string }> {
+    const res = await fetch(`${BASE_URL}/settings`);
+    return handleResponse(res);
+  },
+
+  async updateSettings(data: { gemini_api_key?: string; anthropic_api_key?: string }): Promise<{ has_gemini_key: boolean; has_anthropic_key: boolean }> {
+    const res = await fetch(`${BASE_URL}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
 };
+

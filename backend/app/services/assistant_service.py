@@ -14,13 +14,14 @@ class AssistantService:
     Serviço de Inteligência Artificial para o Orquestrador.
     Permite interação contínua no chat das tarefas e execução de código.
     Suporta:
-    1. Gemini API Oficial (via GEMINI_API_KEY no .env ou ambiente)
+    1. Gemini API Oficial (via GEMINI_API_KEY no .env, settings ou ambiente)
     2. Anthropic API Oficial (via ANTHROPIC_API_KEY)
-    3. Motor Inteligente Embutido (fallback contextual offline)
+    3. Motor Inteligente Embutido Contextual (lê arquivos e banco local)
     """
 
-    def __init__(self):
-        self.http_client = httpx.AsyncClient(timeout=60.0)
+    def _get_http_client(self) -> httpx.AsyncClient:
+        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+        return httpx.AsyncClient(proxy=proxy, timeout=60.0)
 
     async def generate_chat_reply(
         self,
@@ -28,25 +29,33 @@ class AssistantService:
         task_prompt: str,
         history: List[Dict[str, str]],
         project_root: str,
-        user_message: str
+        user_message: str,
+        project_name: str = "Projeto",
+        git_branch: Optional[str] = None
     ) -> str:
         gemini_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None)
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY") or getattr(settings, "ANTHROPIC_API_KEY", None)
 
         if gemini_key:
             try:
-                return await self._call_gemini_api(gemini_key, task_title, task_prompt, history, user_message)
+                return await self._call_gemini_api(
+                    gemini_key, task_title, task_prompt, history, user_message, project_name, project_root
+                )
             except Exception as e:
                 logger.error(f"Erro ao chamar Gemini API: {e}")
 
         if anthropic_key:
             try:
-                return await self._call_anthropic_api(anthropic_key, task_title, task_prompt, history, user_message)
+                return await self._call_anthropic_api(
+                    anthropic_key, task_title, task_prompt, history, user_message, project_name
+                )
             except Exception as e:
                 logger.error(f"Erro ao chamar Anthropic API: {e}")
 
-        # Fallback para o Motor Inteligente Local
-        return self._generate_local_reply(task_title, task_prompt, history, project_root, user_message)
+        # Fallback contextual inteligente
+        return self._generate_local_reply(
+            task_title, task_prompt, history, project_root, user_message, project_name, git_branch
+        )
 
     async def _call_gemini_api(
         self,
@@ -54,25 +63,46 @@ class AssistantService:
         task_title: str,
         task_prompt: str,
         history: List[Dict[str, str]],
-        user_message: str
+        user_message: str,
+        project_name: str,
+        project_root: str
     ) -> str:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-        
+
+        # Mapeia alguns arquivos do projeto para dar contexto ao modelo
+        file_summary = []
+        if os.path.exists(project_root):
+            for root, _, files in os.walk(project_root):
+                if any(x in root for x in [".git", "node_modules", ".worktrees", "__pycache__", "dist", "build"]):
+                    continue
+                for f in files[:15]:
+                    rel = os.path.relpath(os.path.join(root, f), project_root).replace("\\", "/")
+                    file_summary.append(rel)
+                if len(file_summary) >= 20:
+                    break
+
+        files_context = "\n".join(file_summary[:20]) if file_summary else "Diretório inicial ou vazio."
+
         system_instruction = (
-            "Você é um Assistente Sênior de Engenharia de Software operando dentro do Agent Orchestrator. "
-            f"Você está trabalhando na tarefa: '{task_title}'. Contexto/Requisito: '{task_prompt}'. "
-            "Responda sempre em português de forma clara, técnica, prestativa e objetiva. "
-            "Ajude a tirar dúvidas, analisar o código, orientar a arquitetura e sugerir correções de código."
+            "Você é o Engenheiro de Software Sênior e Assistente do Agent Orchestrator. "
+            f"Você está trabalhando no projeto '{project_name}' (pasta: '{project_root}'). "
+            f"Tarefa atual: '{task_title}'. Requisito inicial: '{task_prompt}'.\n"
+            f"Arquivos do repositório mapeados:\n{files_context}\n\n"
+            "Instruções:\n"
+            "1. Responda sempre em português brasileiro de forma natural, inteligente, prestativa e técnica;\n"
+            "2. Converse com o usuário exatamente como um agente de pair programming;\n"
+            "3. Se ele pedir para criar, modificar código ou tirar dúvidas, explique detalhadamente a solução e forneça os blocos de código prontos;\n"
+            "4. Nunca use respostas prontas ou genéricas. Seja específico com base no projeto e na tarefa atual."
         )
 
         contents = []
-        for msg in history[-8:]:  # Últimas mensagens para manter contexto sem estourar
+        for msg in history[-8:]:
             role = "user" if msg.get("role") == "USER" else "model"
             contents.append({
                 "role": role,
                 "parts": [{"text": msg.get("content", "")}]
             })
-        
+
         contents.append({
             "role": "user",
             "parts": [{"text": user_message}]
@@ -83,18 +113,19 @@ class AssistantService:
             "contents": contents,
             "generationConfig": {
                 "temperature": 0.4,
-                "maxOutputTokens": 2048
+                "maxOutputTokens": 3000
             }
         }
 
-        resp = await self.http_client.post(url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        candidates = data.get("candidates", [])
-        if candidates:
-            parts = candidates[0].get("content", {}).get("parts", [])
-            if parts:
-                return parts[0].get("text", "").strip()
+        async with self._get_http_client() as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts:
+                    return parts[0].get("text", "").strip()
 
         return "Não consegui obter uma resposta do modelo Gemini no momento."
 
@@ -104,7 +135,8 @@ class AssistantService:
         task_title: str,
         task_prompt: str,
         history: List[Dict[str, str]],
-        user_message: str
+        user_message: str,
+        project_name: str
     ) -> str:
         url = "https://api.anthropic.com/v1/messages"
         headers = {
@@ -113,8 +145,8 @@ class AssistantService:
             "content-type": "application/json"
         }
         system_prompt = (
-            f"Você é um engenheiro sênior no Agent Orchestrator. Tarefa: {task_title}. "
-            f"Requisito: {task_prompt}. Responda em português."
+            f"Você é um engenheiro sênior no Agent Orchestrator trabalhando no projeto '{project_name}'. "
+            f"Tarefa: '{task_title}'. Requisito: '{task_prompt}'. Responda sempre em português com precisão técnica."
         )
 
         messages = []
@@ -130,12 +162,13 @@ class AssistantService:
             "messages": messages
         }
 
-        resp = await self.http_client.post(url, json=payload, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data.get("content", [])
-        if content and len(content) > 0:
-            return content[0].get("text", "").strip()
+        async with self._get_http_client() as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            content = data.get("content", [])
+            if content and len(content) > 0:
+                return content[0].get("text", "").strip()
         return "Sem resposta da Anthropic API."
 
     def _generate_local_reply(
@@ -144,51 +177,61 @@ class AssistantService:
         task_prompt: str,
         history: List[Dict[str, str]],
         project_root: str,
-        user_message: str
+        user_message: str,
+        project_name: str,
+        git_branch: Optional[str]
     ) -> str:
         msg_lower = user_message.lower().strip()
 
-        # Respostas para saudações e dúvidas de funcionamento
-        if any(w in msg_lower for w in ["funciona", "funcionando", "status", "ativo"]):
+        # Pergunta direta sobre o projeto
+        if any(w in msg_lower for w in ["qual o projeto", "qual projeto", "onde fica o projeto", "qual repo"]):
             return (
-                "Sim! O Orquestrador e o chat estão funcionando e conectados à sua tarefa.\n\n"
-                "📌 **Status atual:**\n"
-                f"- **Tarefa:** {task_title}\n"
-                "- **Isolamento:** Ativo via Git Worktree (arquivos protegidos).\n\n"
-                "💡 **Como prosseguir:**\n"
-                "1. Você pode me fazer perguntas sobre o que deseja implementar nesta tarefa;\n"
-                "2. Ou clicar em **'Lapidar Prompt'** no topo para gerar a especificação atômica de arquivos;\n"
-                "3. Para usar modelos de ponta em tempo real, basta adicionar `GEMINI_API_KEY=sua_chave` no arquivo `.env` (a chave do Google AI Studio é 100% gratuita)."
+                f"Esta tarefa (**{task_title}**) pertence ao projeto **{project_name}**.\n\n"
+                f"📂 **Pasta no computador:** `{project_root}`\n"
+                f"🌿 **Branch Git:** `{git_branch or 'task-isolada'}`\n\n"
+                f"Toda execução desta tarefa roda dentro de uma pasta temporária isolada (`.worktrees/task-...`), "
+                f"portanto seu projeto original fica 100% seguro contra erros ou quebras."
             )
 
-        if any(w in msg_lower for w in ["o que posso fazer", "como usar", "ajuda", "orientação"]):
+        # Pergunta sobre trabalhar normalmente
+        if any(w in msg_lower for w in ["trabalhar normalmente", "posso trabalhar", "posso comecar", "posso começar"]):
             return (
-                f"Olá! Nesta tarefa (**{task_title}**), você pode:\n\n"
-                "1. **Discutir Requisitos:** Me conte o que você espera desta funcionalidade ou correção de bug;\n"
-                "2. **Planejar Arquivos:** Posso te ajudar a identificar quais arquivos do projeto precisam ser alterados;\n"
-                "3. **Executar em Isolamento:** Clicando em 'Executar Tarefa', o trabalho é feito em uma pasta separada sem mexer na sua branch principal;\n"
-                "4. **Revisar Código:** Quando o código for gerado, você verá a diferença na aba **Diffs & Revisão** e poderá aprová-la com 1 clique."
+                f"Sim! Você já pode trabalhar normalmente no projeto **{project_name}**.\n\n"
+                "Aqui está como você pode usar o Orquestrador:\n"
+                "1. **Discutir o que fazer:** Me diga o que você precisa que seja feito nesta tarefa;\n"
+                "2. **Lapidar Prompt:** Clique no botão no topo para mapear os arquivos e economizar tokens;\n"
+                "3. **Executar Tarefa:** O agente cria a pasta isolada e aplica as mudanças no código;\n"
+                "4. **Revisar e Aprovar:** Na aba **Diffs & Revisão**, você vê o que mudou e faz o merge com 1 clique.\n\n"
+                "💡 **Importante:** Para que o modelo converse com você com inteligência generativa plena (como no ChatGPT/Claude) e gere códigos complexos na hora, clique em **'Configurar IA'** no topo e cole uma chave gratuita do Google AI Studio (`GEMINI_API_KEY`)."
             )
 
-        if any(w in msg_lower for w in ["erro", "winerror", "cli", "terminal"]):
+        # Pergunta sobre arquivos do projeto
+        if any(w in msg_lower for w in ["quais arquivos", "listar arquivos", "estrutura", "arquivos existem"]):
+            file_list = []
+            if os.path.exists(project_root):
+                for root, _, files in os.walk(project_root):
+                    if any(x in root for x in [".git", "node_modules", ".worktrees", "__pycache__", "dist", "build"]):
+                        continue
+                    for f in files[:10]:
+                        rel = os.path.relpath(os.path.join(root, f), project_root).replace("\\", "/")
+                        file_list.append(f"`{rel}`")
+                    if len(file_list) >= 15:
+                        break
+            files_str = "\n- ".join(file_list[:15]) if file_list else "Nenhum arquivo encontrado ou diretório inicial."
             return (
-                "⚠️ **Sobre o erro no terminal / CLI:**\n\n"
-                "O erro `[WinError 2]` ocorre porque os CLIs externos (`claude` ou `agy`) não estão no PATH do seu Windows.\n"
-                "Além disso, a versão antiga do `@google/gemini-cli` foi descontinuada pela Google.\n\n"
-                "✅ **Solução Recomendada:**\n"
-                "Use a **API Direta do Gemini**! É muito mais rápida, estável e gratuita:\n"
-                "1. Pegue uma chave em [aistudio.google.com](https://aistudio.google.com);\n"
-                "2. Adicione no arquivo `.env` do orchestrator: `GEMINI_API_KEY=AIzaSy...`;\n"
-                "3. Reinicie o servidor para o agente gerar códigos e modificações automaticamente!"
+                f"Arquivos mapeados no projeto **{project_name}**:\n\n- {files_str}\n\n"
+                "Qual desses arquivos você gostaria de inspecionar ou alterar nesta tarefa?"
             )
 
-        # Resposta técnica contextual genérica
+        # Resposta direta para qualquer outra instrução
         return (
-            f"Recebi sua mensagem sobre a tarefa **'{task_title}'**:\n\n"
+            f"Entendi a sua instrução para a tarefa **'{task_title}'** no projeto **{project_name}**:\n\n"
             f"> \"{user_message}\"\n\n"
-            "Posso te ajudar a detalhar o escopo dessa tarefa, indicar os arquivos que devem ser criados ou alterados no seu projeto, "
-            "ou estruturar a lógica necessária. Se desejar que eu gere código diretamente, recomendo configurar sua `GEMINI_API_KEY` "
-            "no `.env` ou me dar a diretriz detalhada aqui no chat!"
+            "Atualmente estou operando no **Assistente Local do Orquestrador**.\n\n"
+            "🎯 **Para ter o modelo de IA completo conversando e codificando de verdade:**\n"
+            "1. Acesse o botão **'⚙️ Configurar IA'** no topo do painel;\n"
+            "2. Cole sua chave gratuita do Gemini (`GEMINI_API_KEY`) obtida em [aistudio.google.com](https://aistudio.google.com/app/apikey);\n"
+            "3. Assim que você salvar, o **Gemini 2.0 Flash** responderá diretamente cada linha de código e executará tudo o que você pedir!"
         )
 
     async def execute_task_direct(
@@ -205,7 +248,6 @@ class AssistantService:
 
         gemini_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None)
 
-        # Cria ou atualiza documentação da tarefa na worktree isolada
         doc_path = os.path.join(worktree_path, "TASK_IMPLEMENTATION.md")
         content = (
             f"# Tarefa: {task_title}\n\n"
@@ -218,16 +260,15 @@ class AssistantService:
         try:
             with open(doc_path, "w", encoding="utf-8") as f:
                 f.write(content)
-            await log_callback(f"[Assistente] Gerado arquivo de entrega: TASK_IMPLEMENTATION.md")
+            await log_callback("[Assistente] Gerado arquivo de entrega: TASK_IMPLEMENTATION.md")
         except Exception as e:
             await log_callback(f"[Aviso] Falha ao escrever arquivo: {e}")
 
         if gemini_key:
-            await log_callback("[Gemini API] Chave oficial configurada! Sintetizando artefatos...")
+            await log_callback("[Gemini API] Chave oficial configurada! Sintetizando artefatos com Gemini 2.0...")
         else:
-            await log_callback("[Dica] Para IA generativa automatizada gerar código em todos os arquivos, adicione GEMINI_API_KEY no arquivo .env.")
+            await log_callback("[Dica] Para IA generativa plena criar código automaticamente, adicione GEMINI_API_KEY nas Configurações.")
 
-        # Commit no git da worktree
         import subprocess
         try:
             subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=False, capture_output=True)
@@ -241,4 +282,3 @@ class AssistantService:
 
 
 assistant_service = AssistantService()
-
