@@ -7,3 +7,5 @@ node_modules/
 dist/
 .worktrees/
 orchestrator.db
+.pytest_cache/
+uploads/

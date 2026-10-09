@@ -1,6 +1,8 @@
 import os
+import uuid
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
@@ -32,6 +34,7 @@ class TaskCreate(BaseModel):
 class MessageCreate(BaseModel):
     content: str
     auto_run: Optional[bool] = False
+    attachments: Optional[List[dict]] = None
 
 
 class TaskResponse(BaseModel):
@@ -54,8 +57,206 @@ class MessageResponse(BaseModel):
     task_id: str
     role: str
     content: str
+    attachments: Optional[List[dict]] = None
+    created_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AntigravityConversationItem(BaseModel):
+    conversation_id: str
+    title: str
+    preview: str
+    step_count: int
+    last_modified: str
+    workspace: str
+    status: str
+    already_imported: bool = False
+
+
+class ImportAntigravityTaskRequest(BaseModel):
+    project_id: str
+    conversation_id: str
+    title: Optional[str] = None
+
+
+@router.get("/antigravity/conversations", response_model=List[AntigravityConversationItem])
+def list_antigravity_conversations(project_id: Optional[str] = None, db: Session = Depends(get_db)):
+    raw_convs = assistant_service.list_antigravity_conversations()
+    existing_tasks = db.query(Task).all()
+    imported_ids = set()
+    for t in existing_tasks:
+        if t.runner_config and isinstance(t.runner_config, dict):
+            cid = t.runner_config.get("antigravity_conversation_id")
+            if cid:
+                imported_ids.add(cid)
+
+    result = []
+    for c in raw_convs:
+        c_copy = dict(c)
+        c_copy["already_imported"] = c["conversation_id"] in imported_ids
+        result.append(AntigravityConversationItem(**c_copy))
+    return result
+
+
+@router.post("/import-antigravity", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+async def import_antigravity_task(data: ImportAntigravityTaskRequest, db: Session = Depends(get_db)):
+    proj = db.query(Project).filter(Project.id == data.project_id).first()
+    if not proj:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    conv_info = assistant_service.get_antigravity_conversation_info(data.conversation_id)
+    transcript_msgs = assistant_service.get_conversation_transcript(data.conversation_id)
+
+    title = (data.title or (conv_info.get("title") if conv_info else None) or f"Conversa {data.conversation_id[:8]}").strip()
+
+    raw_prompt = ""
+    for m in transcript_msgs:
+        if m.get("role") == "USER":
+            raw_prompt = m.get("content", "").strip()
+            break
+    if not raw_prompt:
+        raw_prompt = (conv_info.get("preview") if conv_info else "") or title
+
+    task = Task(
+        project_id=data.project_id,
+        title=title,
+        raw_prompt=raw_prompt,
+        status=TaskStatus.RUNNING,
+        runner_type=RunnerType.SUBPROCESS_CLI,
+        runner_config={
+            "antigravity_conversation_id": data.conversation_id,
+            "direct_mode": True
+        }
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    for m in transcript_msgs:
+        role_enum = MessageRole.USER if m.get("role") == "USER" else MessageRole.ASSISTANT
+        msg = Message(
+            task_id=task.id,
+            role=role_enum,
+            content=m.get("content", "")
+        )
+        db.add(msg)
+    db.commit()
+
+    assistant_service.set_task_conversation_id(task.id, data.conversation_id)
+
+    await ws_manager.broadcast_dashboard({
+        "type": "TASK_CREATED",
+        "task_id": task.id,
+        "project_id": task.project_id
+    })
+
+    return task
+
+
+@router.post("/{task_id}/sync-antigravity")
+async def sync_task_with_antigravity(task_id: str, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    conv_id = None
+    if task.runner_config and isinstance(task.runner_config, dict):
+        conv_id = task.runner_config.get("antigravity_conversation_id")
+
+    if not conv_id:
+        raise HTTPException(status_code=400, detail="Esta tarefa não possui uma sessão do Antigravity vinculada")
+
+    transcript_msgs = assistant_service.get_conversation_transcript(conv_id)
+    if not transcript_msgs:
+        return {"synced": 0, "total_messages": len(task.messages)}
+
+    existing_msgs = db.query(Message).filter(Message.task_id == task_id).order_by(Message.created_at.asc()).all()
+    existing_contents = {m.content.strip() for m in existing_msgs}
+
+    added_count = 0
+    for m in transcript_msgs:
+        c_text = (m.get("content") or "").strip()
+        if not c_text:
+            continue
+
+        if c_text not in existing_contents:
+            role_enum = MessageRole.USER if m.get("role") == "USER" else MessageRole.ASSISTANT
+            new_msg = Message(
+                task_id=task.id,
+                role=role_enum,
+                content=c_text
+            )
+            db.add(new_msg)
+            db.commit()
+            db.refresh(new_msg)
+            existing_contents.add(c_text)
+            added_count += 1
+
+            await ws_manager.broadcast_task(task.id, {
+                "type": "MESSAGE",
+                "message": {
+                    "id": new_msg.id,
+                    "task_id": new_msg.task_id,
+                    "role": new_msg.role.value,
+                    "content": new_msg.content,
+                    "created_at": new_msg.created_at.isoformat()
+                }
+            })
+
+    return {"synced": added_count, "task_id": task.id, "total_antigravity": len(transcript_msgs)}
+
+
+@router.post("/antigravity/{conversation_id}/sync")
+async def sync_antigravity_conversation_endpoint(conversation_id: str, db: Session = Depends(get_db)):
+    all_tasks = db.query(Task).all()
+    target_task = None
+    for t in all_tasks:
+        if t.runner_config and isinstance(t.runner_config, dict):
+            if t.runner_config.get("antigravity_conversation_id") == conversation_id:
+                target_task = t
+                break
+
+    if not target_task:
+        raise HTTPException(status_code=404, detail="Nenhuma tarefa vinculada a esta conversa do Antigravity")
+
+    return await sync_task_with_antigravity(target_task.id, db)
+
+
+@router.post("/sync-all")
+async def sync_all_tasks_endpoint(project_id: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(Task)
+    if project_id:
+        query = query.filter(Task.project_id == project_id)
+
+    tasks = query.all()
+    tasks_checked = 0
+    tasks_updated = 0
+    total_messages_synced = 0
+    details = []
+
+    for task in tasks:
+        if task.runner_config and isinstance(task.runner_config, dict):
+            conv_id = task.runner_config.get("antigravity_conversation_id")
+            if conv_id:
+                tasks_checked += 1
+                res = await sync_task_with_antigravity(task.id, db)
+                synced_count = res.get("synced", 0)
+                if synced_count > 0:
+                    tasks_updated += 1
+                    total_messages_synced += synced_count
+                details.append({
+                    "task_id": task.id,
+                    "title": task.title,
+                    "synced": synced_count
+                })
+
+    return {
+        "tasks_checked": tasks_checked,
+        "tasks_updated": tasks_updated,
+        "total_messages_synced": total_messages_synced,
+        "details": details
+    }
 
 
 @router.get("/project/{project_id}", response_model=List[TaskResponse])
@@ -257,6 +458,33 @@ def merge_task(task_id: str, db: Session = Depends(get_db)):
     return {"merged": True, "status": "DONE"}
 
 
+@router.post("/{task_id}/upload")
+async def upload_task_attachment(task_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    task_upload_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "uploads", "tasks", task_id))
+    os.makedirs(task_upload_dir, exist_ok=True)
+
+    raw_filename = file.filename or "arquivo"
+    safe_name = f"{uuid.uuid4().hex[:8]}_{raw_filename.replace(' ', '_')}"
+    file_path = os.path.join(task_upload_dir, safe_name)
+
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    return {
+        "filename": safe_name,
+        "original_name": raw_filename,
+        "file_path": file_path.replace("\\", "/"),
+        "file_url": f"/api/uploads/tasks/{task_id}/{safe_name}",
+        "content_type": file.content_type or "application/octet-stream",
+        "size": len(content)
+    }
+
+
 @router.get("/{task_id}/messages", response_model=List[MessageResponse])
 def get_task_messages(task_id: str, db: Session = Depends(get_db)):
     return db.query(Message).filter(Message.task_id == task_id).order_by(Message.created_at.asc()).all()
@@ -275,7 +503,8 @@ async def send_task_message(task_id: str, data: MessageCreate, background_tasks:
     user_msg = Message(
         task_id=task.id,
         role=MessageRole.USER,
-        content=data.content
+        content=data.content,
+        attachments=data.attachments or []
     )
     db.add(user_msg)
     db.commit()
@@ -289,19 +518,27 @@ async def send_task_message(task_id: str, data: MessageCreate, background_tasks:
             "task_id": user_msg.task_id,
             "role": user_msg.role.value,
             "content": user_msg.content,
+            "attachments": user_msg.attachments or [],
             "created_at": user_msg.created_at.isoformat()
         }
     })
 
     # Gera resposta do Assistente
+    conv_id = None
+    if task.runner_config and isinstance(task.runner_config, dict):
+        conv_id = task.runner_config.get("antigravity_conversation_id")
+
     reply_text = await assistant_service.generate_chat_reply(
+        task_id=task.id,
         task_title=task.title,
         task_prompt=task.raw_prompt,
         history=history,
         project_root=task.project.root_path,
         user_message=data.content,
         project_name=task.project.name,
-        git_branch=task.git_branch
+        git_branch=task.git_branch,
+        conversation_id=conv_id,
+        attachments=data.attachments
     )
 
     assistant_msg = Message(
@@ -325,6 +562,14 @@ async def send_task_message(task_id: str, data: MessageCreate, background_tasks:
         }
     })
 
+    # Atualiza conversa Antigravity no runner_config se criada
+    conv_id = assistant_service.get_task_conversation_id(task.id)
+    if conv_id and (not task.runner_config or task.runner_config.get("antigravity_conversation_id") != conv_id):
+        cfg = dict(task.runner_config or {})
+        cfg["antigravity_conversation_id"] = conv_id
+        task.runner_config = cfg
+        db.commit()
+
     # Se a tarefa estiver em revisão ou auto_run solicitado, re-executa o agente com o feedback
     if data.auto_run or task.status == TaskStatus.REVIEW_READY:
         task.status = TaskStatus.RUNNING
@@ -339,4 +584,59 @@ async def send_task_message(task_id: str, data: MessageCreate, background_tasks:
         )
 
     return assistant_msg
+
+
+@router.delete("/{task_id}")
+async def delete_task(task_id: str, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    project_id = task.project_id
+    project_root = task.project.root_path if task.project else None
+
+    # 1. Interrompe execução se estiver ativa
+    try:
+        runner_service.stop_task(task_id)
+    except Exception:
+        pass
+
+    # 2. Localiza e exclui a conversa vinculada do Antigravity
+    conv_id = None
+    if task.runner_config and isinstance(task.runner_config, dict):
+        conv_id = task.runner_config.get("antigravity_conversation_id")
+    if not conv_id:
+        conv_id = assistant_service.get_task_conversation_id(task_id)
+
+    antigravity_cleaned = False
+    if conv_id:
+        antigravity_cleaned = assistant_service.delete_antigravity_conversation(conv_id)
+
+    # 3. Limpa worktree e branch git associadas
+    if project_root and os.path.exists(project_root):
+        try:
+            git_service.cleanup_task_git(project_root, task_id)
+        except Exception:
+            pass
+
+    # 4. Remove a tarefa do banco de dados (mensagens apagadas em cascata)
+    db.delete(task)
+    db.commit()
+
+    # 5. Notifica via WebSocket clientes conectados
+    await ws_manager.broadcast_dashboard({
+        "type": "TASK_DELETED",
+        "task_id": task_id,
+        "project_id": project_id
+    })
+    await ws_manager.broadcast_task(task_id, {
+        "type": "TASK_DELETED",
+        "task_id": task_id
+    })
+
+    return {
+        "deleted": True,
+        "task_id": task_id,
+        "antigravity_cleaned": antigravity_cleaned
+    }
 

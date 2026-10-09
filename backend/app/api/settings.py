@@ -7,9 +7,15 @@ from app.core.config import settings
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+from app.services.assistant_service import AssistantService
+
+_assistant_checker = AssistantService()
+
 class SettingsStatus(BaseModel):
     has_gemini_key: bool
     has_anthropic_key: bool
+    has_antigravity: bool = False
+    antigravity_status: str = "Não detectado"
     gemini_key_preview: Optional[str] = None
     anthropic_key_preview: Optional[str] = None
 
@@ -27,9 +33,14 @@ def get_settings():
     g_preview = f"{gemini_key[:6]}...{gemini_key[-4:]}" if gemini_key and len(gemini_key) > 10 else None
     a_preview = f"{anthropic_key[:6]}...{anthropic_key[-4:]}" if anthropic_key and len(anthropic_key) > 10 else None
 
+    has_agy = bool(_assistant_checker._find_agentapi_cmd())
+    agy_status = "Ativo (Google Pro via agentapi)" if has_agy else "Não detectado"
+
     return SettingsStatus(
         has_gemini_key=bool(gemini_key),
         has_anthropic_key=bool(anthropic_key),
+        has_antigravity=has_agy,
+        antigravity_status=agy_status,
         gemini_key_preview=g_preview,
         anthropic_key_preview=a_preview
     )

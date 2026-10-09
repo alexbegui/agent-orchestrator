@@ -21,3 +21,14 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    if "sqlite" in settings.DATABASE_URL:
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            try:
+                res = conn.execute(text("PRAGMA table_info(messages)"))
+                cols = [row[1] for row in res.fetchall()]
+                if "attachments" not in cols:
+                    conn.execute(text("ALTER TABLE messages ADD COLUMN attachments JSON DEFAULT '[]'"))
+                    conn.commit()
+            except Exception:
+                pass

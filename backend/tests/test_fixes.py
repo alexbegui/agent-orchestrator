@@ -79,5 +79,5 @@ def test_runner_resolves_claude_and_agy_commands():
     assert "Refatorar" in cmd_claude
 
     cmd_agy = runner.resolve_cli_command("SUBPROCESS_CLI", "Criar tela", {"cli": "agy"})
-    assert "agy" in cmd_agy[0].lower()
+    assert "agy" in cmd_agy[0].lower() or "agentapi" in cmd_agy[0].lower()
     assert "Criar tela" in cmd_agy

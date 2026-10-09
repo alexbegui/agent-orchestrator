@@ -24,9 +24,15 @@ class RunnerService:
         if "claude" in cli_choice:
             cmd = shutil.which("claude.cmd") or shutil.which("claude") or "claude"
             return [cmd, "-p", prompt]
-        elif "agy" in cli_choice or "gemini" in cli_choice:
-            cmd = shutil.which("agy.exe") or shutil.which("agy") or "agy"
-            return [cmd, prompt]
+        elif any(k in cli_choice for k in ["agy", "gemini", "antigravity", "agentapi"]):
+            cmd = (
+                shutil.which("agentapi.bat")
+                or shutil.which("agentapi")
+                or os.path.expanduser("~/.gemini/antigravity/bin/agentapi.bat")
+                or shutil.which("agy.exe")
+                or "agentapi"
+            )
+            return [cmd, "new-conversation", "--model=flash", prompt]
         elif cfg.get("cli_cmd"):
             return [cfg["cli_cmd"], prompt]
         else:

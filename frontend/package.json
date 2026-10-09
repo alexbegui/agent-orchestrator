@@ -9,10 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "clsx": "^2.1.0",
+    "lucide-react": "^0.359.0",
+    "marked": "^18.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "lucide-react": "^0.359.0",
-    "clsx": "^2.1.0",
     "tailwind-merge": "^2.2.2"
   },
   "devDependencies": {

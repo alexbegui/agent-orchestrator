@@ -30,9 +30,20 @@ export interface Task {
   git_branch?: string;
 }
 
+export interface Attachment {
+  filename: string;
+  original_name: string;
+  file_path: string;
+  file_url: string;
+  content_type: string;
+  size: number;
+}
+
 export interface Message {
   id: string;
   task_id: string;
   role: 'USER' | 'ASSISTANT' | 'SYSTEM';
   content: string;
+  attachments?: Attachment[];
+  created_at?: string;
 }

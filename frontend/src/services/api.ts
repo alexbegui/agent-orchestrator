@@ -1,4 +1,4 @@
-import { Project, Task, Message } from '../types';
+import { Project, Task, Message, Attachment } from '../types';
 
 const BASE_URL = '/api';
 
@@ -28,6 +28,15 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, root_path, default_branch }),
+    });
+    return handleResponse<Project>(res);
+  },
+
+  async updateProject(id: string, data: { name?: string; default_branch?: string }): Promise<Project> {
+    const res = await fetch(`${BASE_URL}/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
     });
     return handleResponse<Project>(res);
   },
@@ -78,23 +87,45 @@ export const api = {
     return handleResponse<{ merged: boolean; status: string }>(res);
   },
 
+  async deleteTask(taskId: string): Promise<{ deleted: boolean; task_id: string; antigravity_cleaned: boolean }> {
+    const res = await fetch(`${BASE_URL}/tasks/${taskId}`, { method: 'DELETE' });
+    return handleResponse<{ deleted: boolean; task_id: string; antigravity_cleaned: boolean }>(res);
+  },
+
   // Messages
   async getMessages(taskId: string): Promise<Message[]> {
     const res = await fetch(`${BASE_URL}/tasks/${taskId}/messages`);
     return handleResponse<Message[]>(res);
   },
 
-  async sendMessage(taskId: string, content: string, auto_run = true): Promise<Message> {
+  async sendMessage(taskId: string, content: string, attachments?: Attachment[], auto_run = true): Promise<Message> {
     const res = await fetch(`${BASE_URL}/tasks/${taskId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, auto_run }),
+      body: JSON.stringify({ content, auto_run, attachments }),
     });
     return handleResponse<Message>(res);
   },
 
+  async uploadTaskFile(taskId: string, file: File): Promise<Attachment> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${BASE_URL}/tasks/${taskId}/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    return handleResponse<Attachment>(res);
+  },
+
   // Settings & IA Keys
-  async getSettings(): Promise<{ has_gemini_key: boolean; has_anthropic_key: boolean; gemini_key_preview?: string; anthropic_key_preview?: string }> {
+  async getSettings(): Promise<{
+    has_gemini_key: boolean;
+    has_anthropic_key: boolean;
+    has_antigravity?: boolean;
+    antigravity_status?: string;
+    gemini_key_preview?: string;
+    anthropic_key_preview?: string;
+  }> {
     const res = await fetch(`${BASE_URL}/settings`);
     return handleResponse(res);
   },
@@ -107,5 +138,64 @@ export const api = {
     });
     return handleResponse(res);
   },
+
+  // Antigravity Conversations
+  async getAntigravityConversations(projectId?: string): Promise<{
+    conversation_id: string;
+    title: string;
+    preview: string;
+    step_count: number;
+    last_modified: string;
+    workspace: string;
+    status: string;
+    already_imported: boolean;
+  }[]> {
+    const url = projectId
+      ? `${BASE_URL}/tasks/antigravity/conversations?project_id=${projectId}`
+      : `${BASE_URL}/tasks/antigravity/conversations`;
+    const res = await fetch(url);
+    return handleResponse(res);
+  },
+
+  async importAntigravityConversation(data: {
+    project_id: string;
+    conversation_id: string;
+    title?: string;
+  }): Promise<Task> {
+    const res = await fetch(`${BASE_URL}/tasks/import-antigravity`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse<Task>(res);
+  },
+
+  async syncTaskAntigravity(taskId: string): Promise<{ synced: number; task_id: string; total_antigravity: number }> {
+    const res = await fetch(`${BASE_URL}/tasks/${taskId}/sync-antigravity`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async syncAntigravityConversation(conversationId: string): Promise<{ synced: number; task_id: string; total_antigravity: number }> {
+    const res = await fetch(`${BASE_URL}/tasks/antigravity/${conversationId}/sync`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async syncAllTasks(projectId?: string): Promise<{
+    tasks_checked: number;
+    tasks_updated: number;
+    total_messages_synced: number;
+    details: Array<{ task_id: string; title: string; synced: number }>;
+  }> {
+    const url = projectId
+      ? `${BASE_URL}/tasks/sync-all?project_id=${projectId}`
+      : `${BASE_URL}/tasks/sync-all`;
+    const res = await fetch(url, { method: 'POST' });
+    return handleResponse(res);
+  },
 };
+
 

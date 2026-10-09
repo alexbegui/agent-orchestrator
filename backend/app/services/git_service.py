@@ -113,3 +113,18 @@ class GitWorktreeService:
             except Exception:
                 pass
             return False
+
+    def cleanup_task_git(self, project_path: str, task_id: str) -> None:
+        """
+        Descarta a worktree e deleta forçadamente a branch temporária da tarefa,
+        deixando o repositório principal limpo.
+        """
+        # 1. Remove a pasta e desassocia do git worktree
+        self.remove_worktree(project_path, task_id)
+
+        # 2. Deleta a branch local dedicada
+        branch = f"task/{task_id}"
+        try:
+            self._run_git(["branch", "-D", branch], cwd=project_path)
+        except Exception:
+            pass

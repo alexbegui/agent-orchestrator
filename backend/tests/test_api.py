@@ -78,3 +78,28 @@ def test_api_create_project_and_task(client, tmp_path):
     messages = resp.json()
     assert len(messages) >= 1
     assert "24 horas" in messages[-1]["content"]
+
+
+def test_api_update_project(client, tmp_path):
+    proj_dir = tmp_path / "proj-update"
+    proj_dir.mkdir()
+
+    resp = client.post("/api/projects", json={
+        "name": "Nome Antigo",
+        "root_path": str(proj_dir),
+        "default_branch": "main"
+    })
+    assert resp.status_code == 201
+    proj_id = resp.json()["id"]
+
+    # Atualiza o nome
+    patch_resp = client.patch(f"/api/projects/{proj_id}", json={
+        "name": "Nome Novo"
+    })
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["name"] == "Nome Novo"
+
+    # Verifica se persistiu
+    get_resp = client.get(f"/api/projects/{proj_id}")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["name"] == "Nome Novo"

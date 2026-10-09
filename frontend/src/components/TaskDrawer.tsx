@@ -1,24 +1,66 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Task, Message } from '../types';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Task, Message, Attachment } from '../types';
 import { api } from '../services/api';
 import { useTaskWebSocket } from '../hooks/useTaskWebSocket';
 import { DiffViewer } from './DiffViewer';
-import { X, Play, Square, Sparkles, CheckCircle2, MessageSquare, Terminal, FileCode, Check, Loader2 } from 'lucide-react';
+import { MarkdownRenderer } from './MarkdownRenderer';
+import { QuestionNavigator } from './QuestionNavigator';
+import {
+  X,
+  Play,
+  Square,
+  Sparkles,
+  CheckCircle2,
+  MessageSquare,
+  Terminal,
+  FileCode,
+  Check,
+  Loader2,
+  Trash2,
+  AlertTriangle,
+  Maximize2,
+  Minimize2,
+  Copy,
+  RefreshCw,
+  Paperclip,
+  FileText,
+  Image as ImageIcon,
+  ExternalLink,
+  Download,
+  ChevronRight,
+} from 'lucide-react';
 
 interface TaskDrawerProps {
   task: Task;
   onClose: () => void;
   onTaskUpdated: (updated: Task) => void;
+  onTaskDeleted: (taskId: string) => void;
 }
 
-export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpdated }) => {
+export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpdated, onTaskDeleted }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'diff' | 'logs' | 'spec'>('chat');
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMsg, setInputMsg] = useState('');
   const [diffText, setDiffText] = useState('');
   const [loadingAction, setLoadingAction] = useState(false);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  // Estados para Navegador Q&A e Anexos Multimodais
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
+  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [previewImageModal, setPreviewImageModal] = useState<string | null>(null);
+
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleNewMessage = useCallback((incoming: Message) => {
     setMessages((prev) => {
@@ -34,12 +76,12 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     api.getMessages(task.id).then(setMessages).catch(console.error);
   }, [task.id]);
 
-  // Rola suavemente para a última mensagem
+  // Rola suavemente para a última mensagem ao enviar ou receber nova
   useEffect(() => {
-    if (activeTab === 'chat') {
+    if (activeTab === 'chat' && !highlightedMsgId) {
       chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, isSendingMessage, activeTab]);
+  }, [messages, isSendingMessage, activeTab, highlightedMsgId]);
 
   // Carrega diff quando estiver pronto para revisão ou ao abrir aba de diff
   useEffect(() => {
@@ -48,16 +90,127 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     }
   }, [activeTab, task.id, task.status]);
 
+  // Mapeamento entre cada Pergunta e sua respectiva Resposta
+  const questionMetaMap = useMemo(() => {
+    const map = new Map<string, { qNum: number; linkedId?: string }>();
+    let qCount = 0;
+    let lastUserMsgId: string | null = null;
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (msg.role === 'USER') {
+        qCount++;
+        lastUserMsgId = msg.id;
+        map.set(msg.id, { qNum: qCount });
+      } else if (msg.role === 'ASSISTANT' && lastUserMsgId) {
+        const uMeta = map.get(lastUserMsgId);
+        if (uMeta) {
+          map.set(msg.id, { qNum: uMeta.qNum, linkedId: lastUserMsgId });
+          if (!uMeta.linkedId) {
+            uMeta.linkedId = msg.id;
+          }
+        }
+      }
+    }
+    return map;
+  }, [messages]);
+
+  const scrollToMsg = (targetId: string) => {
+    setHighlightedMsgId(targetId);
+    const el = document.getElementById(`msg-${targetId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    setTimeout(() => {
+      setHighlightedMsgId((prev) => (prev === targetId ? null : prev));
+    }, 2500);
+  };
+
+  const handleSelectQuestion = (questionId: string, responseId?: string) => {
+    setActiveQuestionId(questionId);
+    const targetId = responseId || questionId;
+    scrollToMsg(targetId);
+  };
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handleUploadFiles = async (files: FileList | File[]) => {
+    if (!files || files.length === 0) return;
+    setIsUploading(true);
+    setUploadError(null);
+    const uploaded: Attachment[] = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.size > 25 * 1024 * 1024) {
+          setUploadError(`Arquivo "${file.name}" excede o limite de 25MB.`);
+          continue;
+        }
+        const att = await api.uploadTaskFile(task.id, file);
+        uploaded.push(att);
+      }
+      if (uploaded.length > 0) {
+        setPendingAttachments((prev) => [...prev, ...uploaded]);
+      }
+    } catch (err: any) {
+      setUploadError(err.message || 'Erro ao carregar anexo.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleRemovePendingAttachment = (indexToRemove: number) => {
+    setPendingAttachments((prev) => prev.filter((_, idx) => idx !== indexToRemove));
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file') {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      handleUploadFiles(files);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      handleUploadFiles(e.dataTransfer.files);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMsg.trim() || isSendingMessage) return;
+    if ((!inputMsg.trim() && pendingAttachments.length === 0) || isSendingMessage) return;
     const text = inputMsg.trim();
+    const attachmentsToSend = [...pendingAttachments];
     setInputMsg('');
+    setPendingAttachments([]);
     setIsSendingMessage(true);
 
-    // Otimisticamente adiciona mensagem temporária do usuário se necessário
     try {
-      const assistantReply = await api.sendMessage(task.id, text);
+      await api.sendMessage(
+        task.id,
+        text,
+        attachmentsToSend.length > 0 ? attachmentsToSend : undefined
+      );
       // Atualiza com a lista fresca do servidor
       api.getMessages(task.id).then(setMessages).catch(console.error);
     } catch (err) {
@@ -67,6 +220,26 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     }
   };
 
+  const handleSyncAntigravity = async () => {
+    setIsSyncing(true);
+    setSyncFeedback(null);
+    try {
+      const res = await api.syncTaskAntigravity(task.id);
+      const updatedMsgs = await api.getMessages(task.id);
+      setMessages(updatedMsgs);
+      if (res.synced > 0) {
+        setSyncFeedback(`${res.synced} nova(s) resposta(s) sincronizada(s)!`);
+      } else {
+        setSyncFeedback('Tudo atualizado.');
+      }
+      setTimeout(() => setSyncFeedback(null), 3500);
+    } catch (err: any) {
+      setSyncFeedback(err.message || 'Erro ao sincronizar.');
+      setTimeout(() => setSyncFeedback(null), 3500);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const handleRefinePrompt = async () => {
     setLoadingAction(true);
@@ -107,7 +280,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
   const handleMergeTask = async () => {
     setLoadingAction(true);
     try {
-      const res = await api.mergeTask(task.id);
+      await api.mergeTask(task.id);
       const updated = { ...task, status: 'DONE' as const };
       onTaskUpdated(updated);
       alert('Branch incorporada com sucesso na main e worktree removida!');
@@ -119,8 +292,86 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     }
   };
 
+  const handleDeleteTask = async () => {
+    setIsDeleting(true);
+    try {
+      await api.deleteTask(task.id);
+      setIsDeleteModalOpen(false);
+      onTaskDeleted(task.id);
+    } catch (err: any) {
+      alert(`⚠️ Erro ao excluir tarefa: ${err.message || 'Falha na exclusão'}`);
+      setIsDeleting(false);
+    }
+  };
+
+  const renderAttachments = (attachments?: Attachment[]) => {
+    if (!attachments || attachments.length === 0) return null;
+    const imageAttachments = attachments.filter((att) => att.content_type?.startsWith('image/'));
+    const docAttachments = attachments.filter((att) => !att.content_type?.startsWith('image/'));
+
+    return (
+      <div className="mt-2.5 space-y-2">
+        {imageAttachments.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {imageAttachments.map((att, idx) => (
+              <div
+                key={idx}
+                onClick={() => setPreviewImageModal(att.file_url)}
+                className="group relative cursor-pointer rounded-lg overflow-hidden border border-white/20 bg-black/40 hover:border-blue-400 transition"
+              >
+                <img
+                  src={att.file_url}
+                  alt={att.original_name}
+                  className="h-28 max-w-[220px] object-cover transition-transform group-hover:scale-105"
+                />
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition gap-1.5 text-white text-[11px] font-medium">
+                  <Maximize2 size={13} />
+                  <span>Ampliar</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {docAttachments.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            {docAttachments.map((att, idx) => (
+              <a
+                key={idx}
+                href={att.file_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                download={att.original_name}
+                className="flex items-center justify-between p-2 rounded-lg bg-black/30 hover:bg-black/50 border border-white/10 hover:border-blue-400 text-xs text-slate-200 transition group"
+              >
+                <div className="flex items-center gap-2 min-w-0 pr-2">
+                  <div className="p-1.5 rounded bg-blue-500/20 text-blue-400 group-hover:text-blue-300">
+                    <FileText size={14} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-slate-200 group-hover:text-white">
+                      {att.original_name}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      {formatFileSize(att.size)}
+                    </div>
+                  </div>
+                </div>
+                <Download size={13} className="text-slate-400 group-hover:text-blue-400 shrink-0" />
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <section className="w-[580px] border-l border-[#262a3b] bg-[#12141c] flex flex-col shrink-0 shadow-2xl transition-all duration-200">
+    <section
+      className={`${
+        isExpanded ? 'w-[940px]' : 'w-[640px]'
+      } border-l border-[#262a3b] bg-[#12141c] flex flex-col shrink-0 shadow-2xl transition-all duration-200 z-20`}
+    >
       {/* Drawer Header */}
       <div className="p-4 border-b border-[#262a3b] flex items-center justify-between bg-[#1a1d28]">
         <div>
@@ -132,9 +383,26 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
           </div>
           <h2 className="font-bold text-sm text-white mt-1 line-clamp-1">{task.title}</h2>
         </div>
-        <button onClick={onClose} className="text-[#8a93a8] hover:text-white p-1 rounded hover:bg-[#262a3b]">
-          <X size={16} />
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            title={isExpanded ? 'Restaurar largura (640px)' : 'Expandir largura (940px)'}
+            className="text-[#8a93a8] hover:text-white p-1.5 rounded hover:bg-[#262a3b] transition flex items-center"
+          >
+            {isExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button
+            onClick={() => setIsDeleteModalOpen(true)}
+            title="Cancelar e Excluir Tarefa"
+            className="text-rose-400/80 hover:text-rose-300 p-1.5 rounded hover:bg-rose-950/40 transition flex items-center gap-1 text-[11px] font-medium"
+          >
+            <Trash2 size={15} />
+            <span className="hidden sm:inline">Excluir</span>
+          </button>
+          <button onClick={onClose} className="text-[#8a93a8] hover:text-white p-1 rounded hover:bg-[#262a3b]">
+            <X size={16} />
+          </button>
+        </div>
       </div>
 
       {/* Runner Bar */}
@@ -217,34 +485,130 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
       </div>
 
       {/* Tab Contents */}
-      <div className="flex-1 overflow-y-auto custom-scroll p-4">
+      <div className="flex-1 overflow-y-auto custom-scroll p-4 flex flex-col">
         {activeTab === 'chat' && (
           <div className="flex flex-col h-full">
-            <div className="flex-1 space-y-3 overflow-y-auto pr-1 text-xs">
-              <div className="p-2.5 rounded-lg bg-[#1a1d28] border border-[#262a3b] text-[#8a93a8] text-[11px]">
-                💡 Esta thread é 100% isolada. Conversas aqui nunca vazam para outras tarefas.
-              </div>
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`flex gap-2.5 ${m.role === 'USER' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`p-3 rounded-xl max-w-[88%] leading-relaxed whitespace-pre-wrap ${
-                      m.role === 'USER'
-                        ? 'bg-blue-600 text-white rounded-tr-none shadow-sm'
-                        : 'bg-[#1a1d28] border border-[#262a3b] text-slate-200 rounded-tl-none shadow-sm font-sans'
-                    }`}
+            {/* Banner de Sincronização */}
+            <div className="p-2.5 rounded-lg bg-[#1a1d28] border border-[#262a3b] text-[#8a93a8] text-[11px] flex items-center justify-between gap-2 mb-3">
+              <span>💡 Conversa isolada vinculada ao projeto.</span>
+              {task.runner_config?.antigravity_conversation_id && (
+                <div className="flex items-center gap-2">
+                  {syncFeedback && (
+                    <span className="text-[10px] text-emerald-400 font-medium">
+                      {syncFeedback}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSyncAntigravity}
+                    disabled={isSyncing}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#222638] border border-purple-500/30 hover:bg-purple-600/20 text-purple-300 hover:text-white text-[11px] font-medium transition"
+                    title="Puxar respostas recentes do Antigravity"
                   >
-                    {m.role !== 'USER' && (
-                      <div className="text-[10px] text-blue-400 font-semibold mb-1 flex items-center gap-1">
-                        <Sparkles size={11} /> Assistente
+                    <RefreshCw size={11} className={isSyncing ? "animate-spin text-purple-400" : "text-purple-400"} />
+                    <span>{isSyncing ? "Sincronizando..." : "Sincronizar Antigravity"}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Navegador de Perguntas & Respostas */}
+            <QuestionNavigator
+              messages={messages}
+              activeQuestionId={activeQuestionId}
+              onSelectQuestion={handleSelectQuestion}
+            />
+
+            {/* Lista de Mensagens */}
+            <div className="flex-1 space-y-3 overflow-y-auto pr-1 text-xs custom-scroll">
+              {messages.map((m) => {
+                const meta = questionMetaMap.get(m.id);
+                const isHighlighted = highlightedMsgId === m.id;
+
+                return (
+                  <div
+                    key={m.id}
+                    id={`msg-${m.id}`}
+                    className={`flex ${m.role === 'USER' ? 'justify-end' : 'justify-start'} transition-all`}
+                  >
+                    {m.role === 'USER' ? (
+                      <div
+                        className={`p-3 rounded-xl max-w-[85%] bg-blue-600 text-white rounded-tr-none shadow-sm leading-relaxed text-xs transition-all duration-300 ${
+                          isHighlighted ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-[#12141c]' : ''
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3 border-b border-blue-500/40 pb-1 mb-1.5 text-[10px] text-blue-200">
+                          <span className="font-bold uppercase tracking-wider bg-blue-700/60 px-1.5 py-0.5 rounded">
+                            Pergunta #{meta?.qNum}
+                          </span>
+                          {meta?.linkedId && (
+                            <button
+                              type="button"
+                              onClick={() => scrollToMsg(meta.linkedId!)}
+                              className="hover:text-white underline transition flex items-center gap-0.5 text-[10px]"
+                              title="Rolar direto para a resposta do assistente"
+                            >
+                              <span>Ver resposta</span>
+                              <ChevronRight size={11} />
+                            </button>
+                          )}
+                        </div>
+                        {m.content && <div className="whitespace-pre-wrap">{m.content}</div>}
+                        {renderAttachments(m.attachments)}
+                      </div>
+                    ) : (
+                      <div
+                        className={`p-3.5 rounded-xl w-full max-w-[98%] bg-[#151722] border border-[#262a3b] text-slate-200 rounded-tl-none shadow-sm font-sans transition-all duration-300 ${
+                          isHighlighted ? 'ring-2 ring-purple-400 ring-offset-2 ring-offset-[#12141c]' : ''
+                        }`}
+                      >
+                        <div className="flex items-center justify-between border-b border-[#222638] pb-1.5 mb-2.5 text-[11px]">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="text-blue-400 font-semibold flex items-center gap-1.5">
+                              <Sparkles size={12} />
+                              <span>Assistente Antigravity</span>
+                            </div>
+                            {meta?.qNum && (
+                              <button
+                                type="button"
+                                onClick={() => meta.linkedId && scrollToMsg(meta.linkedId)}
+                                className="text-[10px] text-slate-400 hover:text-blue-300 bg-[#1c202e] hover:bg-[#23293c] px-2 py-0.5 rounded border border-[#2c3246] transition flex items-center gap-1 font-medium"
+                                title={`Pular para a Pergunta #${meta.qNum}`}
+                              >
+                                <span>Em resposta à Pergunta #{meta.qNum}</span>
+                              </button>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(m.content);
+                              setCopiedMsgId(m.id);
+                              setTimeout(() => setCopiedMsgId(null), 2000);
+                            }}
+                            title="Copiar resposta inteira"
+                            className="flex items-center gap-1 text-[10px] text-[#8a93a8] hover:text-white px-2 py-0.5 rounded hover:bg-[#202538] transition font-medium"
+                          >
+                            {copiedMsgId === m.id ? (
+                              <>
+                                <Check size={11} className="text-emerald-400" />
+                                <span className="text-emerald-400 font-semibold">Copiado</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy size={11} />
+                                <span>Copiar</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <MarkdownRenderer content={m.content} />
+                        {renderAttachments(m.attachments)}
                       </div>
                     )}
-                    {m.content}
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {isSendingMessage && (
                 <div className="flex gap-2.5 justify-start">
@@ -257,23 +621,98 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
               <div ref={chatBottomRef} />
             </div>
 
-            <form onSubmit={handleSendMessage} className="mt-3 pt-3 border-t border-[#262a3b] flex gap-2">
-              <input
-                type="text"
-                value={inputMsg}
-                disabled={isSendingMessage}
-                onChange={(e) => setInputMsg(e.target.value)}
-                placeholder={isSendingMessage ? 'Aguarde o assistente responder...' : 'Converse ou pergunte sobre a tarefa...'}
-                className="flex-1 bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
-              />
-              <button
-                type="submit"
-                disabled={isSendingMessage || !inputMsg.trim()}
-                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-xs font-medium flex items-center gap-1.5 transition"
-              >
-                {isSendingMessage ? <Loader2 size={12} className="animate-spin" /> : null}
-                <span>Enviar</span>
-              </button>
+            {/* Formulário de Envio com Drag-and-Drop, Cola e Anexos */}
+            <form
+              onSubmit={handleSendMessage}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              className="mt-3 pt-3 border-t border-[#262a3b] flex flex-col gap-2"
+            >
+              {/* Chips de Anexos Pendentes */}
+              {pendingAttachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 p-2 bg-[#161824] border border-[#252a3c] rounded-lg">
+                  {pendingAttachments.map((att, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-2 bg-[#202538] border border-[#2e344d] px-2 py-1 rounded-md text-[11px] text-slate-200"
+                    >
+                      {att.content_type?.startsWith('image/') ? (
+                        <img src={att.file_url} alt="" className="w-5 h-5 rounded object-cover" />
+                      ) : (
+                        <FileText size={13} className="text-blue-400" />
+                      )}
+                      <span className="truncate max-w-[140px] font-medium">{att.original_name}</span>
+                      <span className="text-[9px] text-slate-400 font-mono">({formatFileSize(att.size)})</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemovePendingAttachment(idx)}
+                        className="text-slate-400 hover:text-rose-400 p-0.5 rounded transition"
+                        title="Remover anexo"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {uploadError && (
+                <div className="text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2.5 py-1 rounded-md flex items-center justify-between">
+                  <span>{uploadError}</span>
+                  <button type="button" onClick={() => setUploadError(null)} className="text-rose-400 hover:text-white">
+                    <X size={11} />
+                  </button>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      handleUploadFiles(e.target.files);
+                      e.target.value = '';
+                    }
+                  }}
+                  multiple
+                  className="hidden"
+                  accept="image/*,.pdf,.txt,.md,.json,.csv,.py,.ts,.tsx,.js,.html,.css"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isSendingMessage || isUploading}
+                  title="Anexar imagens ou documentos (ou arraste e cole com Ctrl+V)"
+                  className="p-2 rounded-lg bg-[#161824] hover:bg-[#202538] border border-[#262a3b] hover:border-slate-600 text-slate-400 hover:text-slate-200 transition disabled:opacity-50 flex items-center justify-center shrink-0"
+                >
+                  {isUploading ? <Loader2 size={15} className="animate-spin text-blue-400" /> : <Paperclip size={15} />}
+                </button>
+
+                <input
+                  type="text"
+                  value={inputMsg}
+                  disabled={isSendingMessage}
+                  onChange={(e) => setInputMsg(e.target.value)}
+                  onPaste={handlePaste}
+                  placeholder={
+                    isSendingMessage
+                      ? 'Aguarde o assistente responder...'
+                      : 'Digite uma mensagem, cole imagens (Ctrl+V) ou anexe arquivos...'
+                  }
+                  className="flex-1 bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                />
+
+                <button
+                  type="submit"
+                  disabled={isSendingMessage || (!inputMsg.trim() && pendingAttachments.length === 0)}
+                  className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-xs font-medium flex items-center gap-1.5 transition shrink-0"
+                >
+                  {isSendingMessage ? <Loader2 size={12} className="animate-spin" /> : null}
+                  <span>Enviar</span>
+                </button>
+              </div>
             </form>
           </div>
         )}
@@ -289,7 +728,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                 <button
                   onClick={handleMergeTask}
                   disabled={loadingAction}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 py-1.5 rounded text-xs shadow flex items-center gap-1"
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3.5 py-1.5 rounded text-xs shadow flex items-center gap-1"
                 >
                   <Check size={12} /> Aprovar & Merge
                 </button>
@@ -317,10 +756,9 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
             </div>
             {task.refined_spec ? (
               <div className="p-3 bg-[#090a0f] rounded-lg border border-purple-500/30">
-                <div className="text-[10px] text-purple-400 uppercase font-semibold mb-2">Especificação Lapidada (Spec)</div>
-                <pre className="text-slate-300 whitespace-pre-wrap font-sans text-[11px] leading-relaxed">
-                  {task.refined_spec}
-                </pre>
+                <div className="text-slate-200">
+                  <MarkdownRenderer content={task.refined_spec} />
+                </div>
               </div>
             ) : (
               <div className="p-4 rounded-lg border border-dashed border-[#262a3b] text-center text-[#8a93a8]">
@@ -330,6 +768,113 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
           </div>
         )}
       </div>
+
+      {/* Modal Lightbox para Visualização de Imagem */}
+      {previewImageModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setPreviewImageModal(null)}
+        >
+          <div
+            className="relative max-w-4xl max-h-[90vh] flex flex-col items-center bg-[#10121a] border border-[#262a3b] rounded-xl overflow-hidden shadow-2xl p-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-full flex items-center justify-between pb-2 mb-2 border-b border-[#262a3b] px-1 text-xs">
+              <span className="text-slate-300 font-medium">Visualização da Imagem</span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewImageModal}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-1.5 rounded hover:bg-[#202538] text-slate-400 hover:text-white transition flex items-center gap-1"
+                  title="Abrir imagem original em nova aba"
+                >
+                  <ExternalLink size={14} />
+                  <span className="text-[11px]">Abrir original</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewImageModal(null)}
+                  className="p-1.5 rounded hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition"
+                  title="Fechar"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <img
+              src={previewImageModal}
+              alt="Visualização"
+              className="max-h-[75vh] max-w-full object-contain rounded"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmação de Exclusão */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#161822] border border-[#2d3247] rounded-xl max-w-md w-full p-5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-rose-400 mb-3">
+              <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                <AlertTriangle size={22} />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-sm">Cancelar e Excluir Tarefa?</h3>
+                <p className="text-[11px] text-[#8a93a8]">Esta ação é permanente e não poderá ser desfeita.</p>
+              </div>
+            </div>
+
+            <div className="bg-[#0c0d13] p-3 rounded-lg border border-[#222638] text-xs space-y-2 text-slate-300 my-4">
+              <div className="flex items-start gap-2 text-rose-300/90 font-medium">
+                <span className="text-rose-400">•</span>
+                <span>Processos em execução serão finalizados imediatamente.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-slate-500">•</span>
+                <span>A pasta da worktree e a branch git <code className="text-amber-300 bg-slate-900 px-1 py-0.5 rounded font-mono text-[10px]">task/{task.id.slice(0, 8)}</code> serão removidas.</span>
+              </div>
+              <div className="flex items-start gap-2 text-purple-300/90">
+                <span className="text-purple-400">•</span>
+                <span>A conversa vinculada no Antigravity será apagada.</span>
+              </div>
+              <div className="flex items-start gap-2 text-slate-400">
+                <span className="text-slate-500">•</span>
+                <span>Mensagens e histórico da tarefa serão excluídos do banco local.</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-[#222638] transition disabled:opacity-50"
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleDeleteTask}
+                className="px-4 py-1.5 rounded-lg text-xs font-medium bg-rose-600 hover:bg-rose-500 text-white transition flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin" />
+                    Excluindo...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={13} />
+                    Sim, Excluir Tarefa
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 };

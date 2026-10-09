@@ -4,7 +4,8 @@ import { api } from './services/api';
 import { Sidebar } from './components/Sidebar';
 import { KanbanBoard } from './components/KanbanBoard';
 import { TaskDrawer } from './components/TaskDrawer';
-import { Plus, Shield, Sparkles, FolderPlus, X, Key, Settings, Check } from 'lucide-react';
+import { ImportConversationModal } from './components/ImportConversationModal';
+import { Plus, Shield, Sparkles, FolderPlus, X, Key, Settings, Check, RefreshCw } from 'lucide-react';
 
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -22,12 +23,25 @@ export default function App() {
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
   const [newTaskRunner, setNewTaskRunner] = useState('assistant');
 
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+
   // IA Settings Modal
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [settingsStatus, setSettingsStatus] = useState<{ has_gemini_key: boolean; has_anthropic_key: boolean; gemini_key_preview?: string }>({ has_gemini_key: false, has_anthropic_key: false });
+  const [settingsStatus, setSettingsStatus] = useState<{
+    has_gemini_key: boolean;
+    has_anthropic_key: boolean;
+    has_antigravity?: boolean;
+    antigravity_status?: string;
+    gemini_key_preview?: string;
+  }>({ has_gemini_key: false, has_anthropic_key: false, has_antigravity: false });
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
+
+  // Global Sync States
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [syncAllFeedback, setSyncAllFeedback] = useState<string | null>(null);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
 
   // Carrega lista inicial de projetos
   const loadProjects = async () => {
@@ -91,6 +105,40 @@ export default function App() {
     }
   }, [activeProjectId]);
 
+  const handleSyncAllTasks = async (isManual = true) => {
+    if (isSyncingAll) return;
+    setIsSyncingAll(true);
+    try {
+      const res = await api.syncAllTasks(activeProjectId || undefined);
+      if (res.tasks_updated > 0 || res.total_messages_synced > 0) {
+        if (activeProjectId) {
+          loadTasks(activeProjectId);
+        }
+        setSyncAllFeedback(`${res.total_messages_synced} nova(s) resposta(s) em ${res.tasks_updated} tarefa(s)!`);
+        setTimeout(() => setSyncAllFeedback(null), 4000);
+      } else if (isManual) {
+        setSyncAllFeedback(res.tasks_checked > 0 ? 'Todas as tarefas sincronizadas.' : 'Nenhuma tarefa vinculada.');
+        setTimeout(() => setSyncAllFeedback(null), 3000);
+      }
+    } catch (err: any) {
+      if (isManual) {
+        setSyncAllFeedback('Erro ao sincronizar tarefas.');
+        setTimeout(() => setSyncAllFeedback(null), 3000);
+      }
+    } finally {
+      setIsSyncingAll(false);
+    }
+  };
+
+  // Auto-sync suave em segundo plano (a cada 20 segundos)
+  useEffect(() => {
+    if (!autoSyncEnabled || !activeProjectId) return;
+    const interval = setInterval(() => {
+      handleSyncAllTasks(false);
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [autoSyncEnabled, activeProjectId, isSyncingAll]);
+
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -135,6 +183,22 @@ export default function App() {
     setSelectedTask(updated);
   };
 
+  const handleTaskDeleted = (taskId: string) => {
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    if (selectedTask?.id === taskId) {
+      setSelectedTask(null);
+    }
+  };
+
+  const handleTaskImported = (task: Task) => {
+    setTasks((prev) => [task, ...prev]);
+    setSelectedTask(task);
+  };
+
+  const handleProjectUpdated = (updated: Project) => {
+    setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+  };
+
   return (
     <div className="h-screen flex flex-col bg-[#090a0f] text-slate-100 overflow-hidden text-sm">
       {/* Topbar */}
@@ -172,22 +236,55 @@ export default function App() {
           <button
             onClick={() => setIsSettingsModalOpen(true)}
             className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-medium border transition ${
-              settingsStatus.has_gemini_key
+              settingsStatus.has_antigravity || settingsStatus.has_gemini_key
                 ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
                 : 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
             }`}
           >
             <Key size={13} />
-            <span>{settingsStatus.has_gemini_key ? '✨ IA Conectada' : '⚙️ Configurar IA'}</span>
+            <span>
+              {settingsStatus.has_antigravity
+                ? '✨ Antigravity Pro Ativo'
+                : settingsStatus.has_gemini_key
+                ? '✨ Gemini API Ativa'
+                : '⚙️ Configurar IA'}
+            </span>
           </button>
 
           {activeProjectId && (
-            <button
-              onClick={() => setIsNewTaskModalOpen(true)}
-              className="bg-blue-600 hover:bg-blue-500 text-white font-medium px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs shadow-sm transition"
-            >
-              <Plus size={14} /> Nova Tarefa
-            </button>
+            <div className="flex items-center gap-2">
+              {syncAllFeedback && (
+                <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg font-medium animate-in fade-in duration-200">
+                  {syncAllFeedback}
+                </span>
+              )}
+
+              <button
+                onClick={() => handleSyncAllTasks(true)}
+                disabled={isSyncingAll}
+                className="bg-[#1a1d2c] hover:bg-[#23273a] text-blue-300 hover:text-blue-200 border border-blue-500/30 hover:border-blue-500/60 font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs shadow-sm transition disabled:opacity-50"
+                title="Sincronizar respostas do Antigravity em todas as tarefas do projeto de uma só vez"
+              >
+                <RefreshCw size={13} className={isSyncingAll ? "animate-spin text-blue-400" : "text-blue-400"} />
+                <span>{isSyncingAll ? "Sincronizando..." : "Sincronizar Todas"}</span>
+              </button>
+
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="bg-[#1a1d2c] hover:bg-[#23273a] text-purple-300 hover:text-purple-200 border border-purple-500/30 hover:border-purple-500/60 font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs shadow-sm transition"
+                title="Vincular uma conversa ativa no Antigravity a este projeto"
+              >
+                <Sparkles size={13} className="text-purple-400" />
+                <span>Importar do Antigravity</span>
+              </button>
+
+              <button
+                onClick={() => setIsNewTaskModalOpen(true)}
+                className="bg-blue-600 hover:bg-blue-500 text-white font-medium px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs shadow-sm transition"
+              >
+                <Plus size={14} /> Nova Tarefa
+              </button>
+            </div>
           )}
         </div>
       </header>
@@ -199,6 +296,7 @@ export default function App() {
           activeProjectId={activeProjectId}
           onSelectProject={(id) => setActiveProjectId(id)}
           onOpenNewProject={() => setIsNewProjectModalOpen(true)}
+          onProjectUpdated={handleProjectUpdated}
         />
 
         <main className="flex-1 overflow-x-auto p-5 custom-scroll bg-[#090a0f]">
@@ -211,6 +309,32 @@ export default function App() {
                 Tarefas operando em worktrees isoladas. Zero colisão de arquivos ou contexto.
               </p>
             </div>
+
+            {activeProjectId && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAutoSyncEnabled(!autoSyncEnabled)}
+                  title={
+                    autoSyncEnabled
+                      ? 'Auto-sincronização ativa a cada 20s. Clique para pausar.'
+                      : 'Auto-sincronização pausada. Clique para reativar.'
+                  }
+                  className={`flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full border transition ${
+                    autoSyncEnabled
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+                      : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      autoSyncEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                    }`}
+                  />
+                  <span>{autoSyncEnabled ? 'Auto-sync ativo (20s)' : 'Auto-sync pausado'}</span>
+                </button>
+              </div>
+            )}
           </div>
 
           <KanbanBoard tasks={tasks} onSelectTask={(task) => setSelectedTask(task)} />
@@ -221,6 +345,7 @@ export default function App() {
             task={selectedTask}
             onClose={() => setSelectedTask(null)}
             onTaskUpdated={handleTaskUpdated}
+            onTaskDeleted={handleTaskDeleted}
           />
         )}
       </div>
@@ -363,9 +488,21 @@ export default function App() {
               </button>
             </div>
 
-            <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded-lg text-xs text-blue-200 mb-4 leading-relaxed">
-              💡 Para que o modelo converse com você com inteligência plena (como o ChatGPT ou Claude) e gere códigos em tempo real, conecte sua chave do <strong>Google Gemini</strong>. É 100% gratuita no Google AI Studio.
-            </div>
+            {settingsStatus.has_antigravity ? (
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/25 rounded-lg text-xs text-emerald-200 mb-4 leading-relaxed flex items-start gap-2.5">
+                <Check size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-emerald-300">Google Antigravity CLI Ativo!</strong>
+                  <p className="text-[11px] text-emerald-300/80 mt-1">
+                    Seu Orquestrador está conectado à sua conta <strong>Google Pro</strong> via <code>agentapi</code> nativo. O chat e as tarefas usam o modelo oficial sem necessidade de chave externa de API.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded-lg text-xs text-blue-200 mb-4 leading-relaxed">
+                💡 Para que o modelo converse com você com inteligência plena e gere códigos em tempo real, conecte sua chave do <strong>Google Gemini</strong>. É 100% gratuita no Google AI Studio.
+              </div>
+            )}
 
             <form onSubmit={handleSaveSettings} className="space-y-4 text-xs">
               <div>
@@ -422,6 +559,16 @@ export default function App() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Modal de Importação do Antigravity */}
+      {activeProject && (
+        <ImportConversationModal
+          project={activeProject}
+          isOpen={isImportModalOpen}
+          onClose={() => setIsImportModalOpen(false)}
+          onTaskImported={handleTaskImported}
+        />
       )}
     </div>
   );

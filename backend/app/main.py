@@ -1,4 +1,6 @@
+import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
@@ -55,10 +57,12 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
         ws_manager.disconnect_dashboard(websocket)
 
 
-# Servir Frontend Estático compilado se existir
-import os
-from fastapi.staticfiles import StaticFiles
+# Servir Uploads de Anexos
+uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "uploads"))
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/api/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
+# Servir Frontend Estático compilado se existir
 frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
 if os.path.exists(frontend_dist):
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
