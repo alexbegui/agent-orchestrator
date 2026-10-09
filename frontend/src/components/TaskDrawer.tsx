@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Task, Message } from '../types';
 import { api } from '../services/api';
 import { useTaskWebSocket } from '../hooks/useTaskWebSocket';
 import { DiffViewer } from './DiffViewer';
-import { X, Play, Square, Sparkles, CheckCircle2, MessageSquare, Terminal, FileCode, Check } from 'lucide-react';
+import { X, Play, Square, Sparkles, CheckCircle2, MessageSquare, Terminal, FileCode, Check, Loader2 } from 'lucide-react';
 
 interface TaskDrawerProps {
   task: Task;
@@ -17,13 +17,29 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
   const [inputMsg, setInputMsg] = useState('');
   const [diffText, setDiffText] = useState('');
   const [loadingAction, setLoadingAction] = useState(false);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
 
-  const { logs, taskStatus } = useTaskWebSocket(task.id);
+  const handleNewMessage = useCallback((incoming: Message) => {
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === incoming.id)) return prev;
+      return [...prev, incoming];
+    });
+  }, []);
+
+  const { logs, taskStatus } = useTaskWebSocket(task.id, handleNewMessage);
 
   // Carrega histórico de mensagens
   useEffect(() => {
     api.getMessages(task.id).then(setMessages).catch(console.error);
   }, [task.id]);
+
+  // Rola suavemente para a última mensagem
+  useEffect(() => {
+    if (activeTab === 'chat') {
+      chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, isSendingMessage, activeTab]);
 
   // Carrega diff quando estiver pronto para revisão ou ao abrir aba de diff
   useEffect(() => {
@@ -34,15 +50,23 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMsg.trim()) return;
+    if (!inputMsg.trim() || isSendingMessage) return;
+    const text = inputMsg.trim();
+    setInputMsg('');
+    setIsSendingMessage(true);
+
+    // Otimisticamente adiciona mensagem temporária do usuário se necessário
     try {
-      const newMsg = await api.sendMessage(task.id, inputMsg.trim());
-      setMessages((prev) => [...prev, newMsg]);
-      setInputMsg('');
+      const assistantReply = await api.sendMessage(task.id, text);
+      // Atualiza com a lista fresca do servidor
+      api.getMessages(task.id).then(setMessages).catch(console.error);
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsSendingMessage(false);
     }
   };
+
 
   const handleRefinePrompt = async () => {
     setLoadingAction(true);
@@ -206,31 +230,49 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                   className={`flex gap-2.5 ${m.role === 'USER' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`p-3 rounded-xl max-w-[85%] leading-relaxed ${
+                    className={`p-3 rounded-xl max-w-[88%] leading-relaxed whitespace-pre-wrap ${
                       m.role === 'USER'
-                        ? 'bg-blue-600 text-white rounded-tr-none'
-                        : 'bg-[#1a1d28] border border-[#262a3b] text-slate-200 rounded-tl-none'
+                        ? 'bg-blue-600 text-white rounded-tr-none shadow-sm'
+                        : 'bg-[#1a1d28] border border-[#262a3b] text-slate-200 rounded-tl-none shadow-sm font-sans'
                     }`}
                   >
+                    {m.role !== 'USER' && (
+                      <div className="text-[10px] text-blue-400 font-semibold mb-1 flex items-center gap-1">
+                        <Sparkles size={11} /> Assistente
+                      </div>
+                    )}
                     {m.content}
                   </div>
                 </div>
               ))}
+
+              {isSendingMessage && (
+                <div className="flex gap-2.5 justify-start">
+                  <div className="p-3 rounded-xl max-w-[85%] bg-[#1a1d28] border border-blue-500/30 text-blue-300 rounded-tl-none flex items-center gap-2 text-xs">
+                    <Loader2 size={13} className="animate-spin text-blue-400" />
+                    <span>Assistente processando resposta...</span>
+                  </div>
+                </div>
+              )}
+              <div ref={chatBottomRef} />
             </div>
 
             <form onSubmit={handleSendMessage} className="mt-3 pt-3 border-t border-[#262a3b] flex gap-2">
               <input
                 type="text"
                 value={inputMsg}
+                disabled={isSendingMessage}
                 onChange={(e) => setInputMsg(e.target.value)}
-                placeholder="Converse ou peça ajustes para este agente..."
-                className="flex-1 bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                placeholder={isSendingMessage ? 'Aguarde o assistente responder...' : 'Converse ou pergunte sobre a tarefa...'}
+                className="flex-1 bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
               />
               <button
                 type="submit"
-                className="bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2 rounded-lg text-xs font-medium"
+                disabled={isSendingMessage || !inputMsg.trim()}
+                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-xs font-medium flex items-center gap-1.5 transition"
               >
-                Enviar
+                {isSendingMessage ? <Loader2 size={12} className="animate-spin" /> : null}
+                <span>Enviar</span>
               </button>
             </form>
           </div>

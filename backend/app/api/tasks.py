@@ -12,6 +12,7 @@ from app.models.message import Message, MessageRole
 from app.services.git_service import GitWorktreeService
 from app.services.runner_service import RunnerService
 from app.services.refiner_service import PromptRefinerService
+from app.services.assistant_service import assistant_service
 from app.websockets.manager import ws_manager
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -106,7 +107,7 @@ def refine_task(task_id: str, db: Session = Depends(get_db)):
     return task
 
 
-async def _run_task_background(task_id: str, project_path: str, command: list[str], db_session_factory):
+async def _run_task_background(task_id: str, project_path: str, command: list[str], db_session_factory, is_assistant: bool = False, prompt: str = ""):
     worktree_path = git_service.get_worktree_path(project_path, task_id)
     try:
         await ws_manager.broadcast_task(task_id, {
@@ -120,17 +121,35 @@ async def _run_task_background(task_id: str, project_path: str, command: list[st
             "status": "RUNNING"
         })
 
-        async for line in runner_service.execute_command(task_id, command, cwd=worktree_path):
-            await ws_manager.broadcast_task(task_id, {
-                "type": "LOG",
-                "content": line.rstrip()
-            })
+        if is_assistant or (command and command[0] == "assistant"):
+            async def log_cb(msg: str):
+                await ws_manager.broadcast_task(task_id, {"type": "LOG", "content": msg})
 
-        if runner_service.was_stopped(task_id):
-            return
+            db_tmp = db_session_factory()
+            t_obj = db_tmp.query(Task).filter(Task.id == task_id).first()
+            title = t_obj.title if t_obj else "Tarefa"
+            db_tmp.close()
 
-        rc = runner_service.get_last_returncode(task_id)
-        final_status = TaskStatus.REVIEW_READY if rc == 0 else TaskStatus.FAILED
+            await assistant_service.execute_task_direct(
+                task_id=task_id,
+                task_title=title,
+                prompt=prompt,
+                worktree_path=worktree_path,
+                log_callback=log_cb
+            )
+            final_status = TaskStatus.REVIEW_READY
+        else:
+            async for line in runner_service.execute_command(task_id, command, cwd=worktree_path):
+                await ws_manager.broadcast_task(task_id, {
+                    "type": "LOG",
+                    "content": line.rstrip()
+                })
+
+            if runner_service.was_stopped(task_id):
+                return
+
+            rc = runner_service.get_last_returncode(task_id)
+            final_status = TaskStatus.REVIEW_READY if rc == 0 else TaskStatus.FAILED
 
         db = db_session_factory()
         t = db.query(Task).filter(Task.id == task_id).first()
@@ -160,6 +179,8 @@ async def _run_task_background(task_id: str, project_path: str, command: list[st
             t.status = TaskStatus.FAILED
             db.commit()
         db.close()
+        await ws_manager.broadcast_task(task_id, {"type": "STATUS", "status": "FAILED"})
+        await ws_manager.broadcast_dashboard({"type": "TASK_UPDATED", "task_id": task_id, "status": "FAILED"})
 
 
 @router.post("/{task_id}/run", response_model=TaskResponse)
@@ -169,8 +190,15 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
     prompt = task.refined_spec or task.raw_prompt
-    cmd = runner_service.resolve_cli_command(task.runner_type.value, prompt, task.runner_config)
-    
+    is_assistant = (
+        task.runner_type == RunnerType.DIRECT_API
+        or (task.runner_config and task.runner_config.get("cli") in ["assistant", "integrated"])
+    )
+
+    cmd = []
+    if not is_assistant:
+        cmd = runner_service.resolve_cli_command(task.runner_type.value, prompt, task.runner_config)
+
     task.status = TaskStatus.RUNNING
     task.worktree_path = git_service.get_worktree_path(task.project.root_path, task.id)
     task.git_branch = f"task/{task.id}"
@@ -183,9 +211,12 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
         task.id,
         task.project.root_path,
         cmd,
-        SessionLocal
+        SessionLocal,
+        is_assistant,
+        prompt
     )
     return task
+
 
 
 @router.post("/{task_id}/stop")
@@ -232,18 +263,66 @@ def get_task_messages(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{task_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
-def send_task_message(task_id: str, data: MessageCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def send_task_message(task_id: str, data: MessageCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
-    msg = Message(
+    # Recupera histórico anterior
+    prev_messages = db.query(Message).filter(Message.task_id == task_id).order_by(Message.created_at.asc()).all()
+    history = [{"role": m.role.value, "content": m.content} for m in prev_messages]
+
+    user_msg = Message(
         task_id=task.id,
         role=MessageRole.USER,
         content=data.content
     )
-    db.add(msg)
-    
+    db.add(user_msg)
+    db.commit()
+    db.refresh(user_msg)
+
+    # Notifica via WebSocket sobre a nova mensagem do usuário
+    await ws_manager.broadcast_task(task.id, {
+        "type": "MESSAGE",
+        "message": {
+            "id": user_msg.id,
+            "task_id": user_msg.task_id,
+            "role": user_msg.role.value,
+            "content": user_msg.content,
+            "created_at": user_msg.created_at.isoformat()
+        }
+    })
+
+    # Gera resposta do Assistente
+    reply_text = await assistant_service.generate_chat_reply(
+        task_title=task.title,
+        task_prompt=task.raw_prompt,
+        history=history,
+        project_root=task.project.root_path,
+        user_message=data.content
+    )
+
+    assistant_msg = Message(
+        task_id=task.id,
+        role=MessageRole.ASSISTANT,
+        content=reply_text
+    )
+    db.add(assistant_msg)
+    db.commit()
+    db.refresh(assistant_msg)
+
+    # Notifica via WebSocket sobre a resposta do assistente
+    await ws_manager.broadcast_task(task.id, {
+        "type": "MESSAGE",
+        "message": {
+            "id": assistant_msg.id,
+            "task_id": assistant_msg.task_id,
+            "role": assistant_msg.role.value,
+            "content": assistant_msg.content,
+            "created_at": assistant_msg.created_at.isoformat()
+        }
+    })
+
     # Se a tarefa estiver em revisão ou auto_run solicitado, re-executa o agente com o feedback
     if data.auto_run or task.status == TaskStatus.REVIEW_READY:
         task.status = TaskStatus.RUNNING
@@ -257,6 +336,5 @@ def send_task_message(task_id: str, data: MessageCreate, background_tasks: Backg
             SessionLocal
         )
 
-    db.commit()
-    db.refresh(msg)
-    return msg
+    return assistant_msg
+

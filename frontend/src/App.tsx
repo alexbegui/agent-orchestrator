@@ -20,7 +20,7 @@ export default function App() {
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
-  const [newTaskRunner, setNewTaskRunner] = useState('claude');
+  const [newTaskRunner, setNewTaskRunner] = useState('assistant');
 
   // Carrega lista inicial de projetos
   const loadProjects = async () => {
@@ -77,11 +77,12 @@ export default function App() {
     e.preventDefault();
     if (!activeProjectId || !newTaskTitle || !newTaskPrompt) return;
     try {
+      const runnerType = newTaskRunner === 'assistant' ? 'DIRECT_API' : 'SUBPROCESS_CLI';
       const created = await api.createTask(
         activeProjectId,
         newTaskTitle,
         newTaskPrompt,
-        'SUBPROCESS_CLI',
+        runnerType,
         { cli: newTaskRunner }
       );
       setTasks((prev) => [...prev, created]);
@@ -275,8 +276,9 @@ export default function App() {
                   onChange={(e) => setNewTaskRunner(e.target.value)}
                   className="w-full bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                 >
-                  <option value="claude">Claude Code CLI (Local)</option>
-                  <option value="agy">Antigravity (agy / Gemini Local)</option>
+                  <option value="assistant">✨ Assistente Integrado (Recomendado - Direto no Navegador)</option>
+                  <option value="claude">Claude Code CLI (Requer 'claude' no PATH)</option>
+                  <option value="agy">Antigravity / Gemini CLI (Requer 'agy' no PATH)</option>
                   <option value="custom">Comando Customizado</option>
                 </select>
               </div>

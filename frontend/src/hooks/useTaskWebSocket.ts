@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
+import { Message } from '../types';
 
-interface WebSocketMessage {
-  type: 'LOG' | 'STATUS' | 'ERROR';
+interface WebSocketPayload {
+  type: 'LOG' | 'STATUS' | 'ERROR' | 'MESSAGE';
   content?: string;
   status?: string;
+  message?: Message;
 }
 
-export function useTaskWebSocket(taskId: string | null) {
+export function useTaskWebSocket(taskId: string | null, onNewMessage?: (msg: Message) => void) {
   const [logs, setLogs] = useState<string[]>([]);
   const [taskStatus, setTaskStatus] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -25,11 +27,15 @@ export function useTaskWebSocket(taskId: string | null) {
 
     ws.onmessage = (event) => {
       try {
-        const msg: WebSocketMessage = JSON.parse(event.data);
-        if (msg.type === 'LOG' && msg.content) {
-          setLogs((prev) => [...prev, msg.content!]);
-        } else if (msg.type === 'STATUS' && msg.status) {
-          setTaskStatus(msg.status);
+        const payload: WebSocketPayload = JSON.parse(event.data);
+        if (payload.type === 'LOG' && payload.content) {
+          setLogs((prev) => [...prev, payload.content!]);
+        } else if (payload.type === 'STATUS' && payload.status) {
+          setTaskStatus(payload.status);
+        } else if (payload.type === 'MESSAGE' && payload.message) {
+          if (onNewMessage) {
+            onNewMessage(payload.message);
+          }
         }
       } catch (err) {
         console.error('Failed to parse WS message', err);
@@ -40,7 +46,7 @@ export function useTaskWebSocket(taskId: string | null) {
       ws.close();
       wsRef.current = null;
     };
-  }, [taskId]);
+  }, [taskId, onNewMessage]);
 
   return { logs, taskStatus };
 }

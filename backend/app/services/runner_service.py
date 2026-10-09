@@ -44,22 +44,43 @@ class RunnerService:
         env["PYTHONUNBUFFERED"] = "1"
         self.stopped_tasks.discard(task_id)
 
+        # Verifica se o binário existe antes de disparar no Windows
+        if isinstance(command, list) and len(command) > 0:
+            exe = command[0]
+            if not shutil.which(exe) and not os.path.exists(exe):
+                yield f"[Erro no Runner] O executável '{exe}' não foi encontrado no PATH do Windows.\n"
+                yield "[Diagnóstico] Os CLIs externos (claude ou agy) precisam estar instalados globalmente.\n"
+                yield "[Alternativa] Você pode utilizar a API Direta configurando GEMINI_API_KEY no arquivo .env!\n"
+                self.last_returncodes[task_id] = 127
+                return
+
         if isinstance(command, list):
-            proc = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=cwd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=env
-            )
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *command,
+                    cwd=cwd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    env=env
+                )
+            except FileNotFoundError:
+                yield f"[Erro no Runner] O executável '{command[0]}' não foi encontrado no sistema.\n"
+                self.last_returncodes[task_id] = 127
+                return
         else:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                cwd=cwd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=env
-            )
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    command,
+                    cwd=cwd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    env=env
+                )
+            except FileNotFoundError:
+                yield f"[Erro no Runner] Falha ao invocar shell para o comando.\n"
+                self.last_returncodes[task_id] = 127
+                return
+
 
         self.active_processes[task_id] = proc
 
