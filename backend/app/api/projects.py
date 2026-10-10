@@ -7,8 +7,24 @@ import os
 from app.core.database import get_db
 from app.models.project import Project
 from app.models.task import Task
+from app.services.terminal_service import terminal_service
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+
+@router.post("/{project_id}/terminal")
+def open_project_terminal(project_id: str, db: Session = Depends(get_db)):
+    """Abre um terminal nativo na pasta do projeto."""
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if not proj:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    try:
+        caminho = terminal_service.open_at(proj.root_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"opened_at": caminho}
 
 
 class ProjectCreate(BaseModel):

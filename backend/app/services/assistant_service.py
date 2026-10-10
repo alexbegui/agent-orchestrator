@@ -1,5 +1,6 @@
 import os
 import json
+import uuid
 import shutil
 import asyncio
 import logging
@@ -24,6 +25,73 @@ class AssistantService:
 
     def __init__(self):
         self._task_conversations: Dict[str, str] = {}
+        self._claude_sessions: Dict[str, str] = {}
+
+    def _find_claude_cmd(self) -> Optional[str]:
+        """Localiza o binário do Claude Code CLI no Windows."""
+        for name in ["claude.cmd", "claude", "claude.exe"]:
+            found = shutil.which(name)
+            if found:
+                return found
+        return None
+
+    def _find_agy_cmd(self) -> Optional[str]:
+        """
+        Localiza o CLI independente do Antigravity. Diferente do agentapi, ele
+        não exige o IDE aberto nem ANTIGRAVITY_LS_ADDRESS/CSRF_TOKEN.
+        """
+        for name in ["agy", "agy.exe"]:
+            found = shutil.which(name)
+            if found:
+                return found
+        padrao = os.path.expanduser("~/AppData/Local/agy/bin/agy.exe")
+        return padrao if os.path.exists(padrao) else None
+
+    async def _call_agy_cli(
+        self,
+        task_id: Optional[str],
+        task_title: str,
+        task_prompt: str,
+        user_message: str,
+        project_name: str,
+        project_root: str,
+        conversation_id: Optional[str] = None,
+        worktree_path: Optional[str] = None
+    ) -> Optional[str]:
+        """Conversa pelo agy, retomando a conversa por ID quando já existe."""
+        agy_cmd = self._find_agy_cmd()
+        if not agy_cmd:
+            return None
+
+        cwd = worktree_path if (worktree_path and os.path.isdir(worktree_path)) else project_root
+        conv_id = conversation_id or (self._task_conversations.get(task_id) if task_id else None)
+
+        cmd = [agy_cmd, "-p", "--dangerously-skip-permissions"]
+        if conv_id:
+            cmd += ["--conversation", conv_id, user_message]
+        else:
+            cmd.append(
+                f"Você é o Engenheiro de Software Sênior do Agent Orchestrator "
+                f"trabalhando no projeto '{project_name}'. "
+                f"Tarefa: '{task_title}'. Requisito: '{task_prompt}'.\n\n"
+                f"Mensagem do usuário: {user_message}"
+            )
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            logger.error(
+                f"agy retornou {proc.returncode}: "
+                f"{stderr.decode('utf-8', errors='replace')[:500]}"
+            )
+            return None
+
+        return stdout.decode("utf-8", errors="replace").strip() or None
 
     def _find_agentapi_cmd(self) -> Optional[str]:
         """Localiza o binário oficial do Antigravity CLI no Windows."""
@@ -51,7 +119,9 @@ class AssistantService:
         git_branch: Optional[str] = None,
         task_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
-        attachments: Optional[List[dict]] = None
+        attachments: Optional[List[dict]] = None,
+        cli_preference: Optional[str] = None,
+        worktree_path: Optional[str] = None
     ) -> str:
         effective_message = user_message
         if attachments:
@@ -64,7 +134,48 @@ class AssistantService:
             att_info += "\n(Por favor, inspecione a imagem/documento e responda ao usuário sobre ele)"
             effective_message = f"{user_message}{att_info}"
 
-        # 1. Antigravity CLI Nativo Oficial (Google Pro autenticado)
+        # 0. CLI escolhido na criação da tarefa tem prioridade sobre a cascata.
+        #    Se ele falhar, seguimos para a cascata abaixo em vez de deixar o chat mudo.
+        choice = (cli_preference or "").lower()
+        if any(k in choice for k in ("agy", "antigravity", "gemini")):
+            try:
+                reply = await self._call_agy_cli(
+                    task_id=task_id, task_title=task_title, task_prompt=task_prompt,
+                    user_message=effective_message, project_name=project_name,
+                    project_root=project_root, conversation_id=conversation_id,
+                    worktree_path=worktree_path
+                )
+                if reply:
+                    return reply
+            except Exception as e:
+                logger.error(f"Erro ao chamar o agy (escolha da tarefa): {e}")
+
+        if "claude" in choice:
+            try:
+                reply = await self._call_claude_cli(
+                    task_id=task_id, task_title=task_title, task_prompt=task_prompt,
+                    user_message=effective_message, project_name=project_name,
+                    project_root=project_root, worktree_path=worktree_path
+                )
+                if reply:
+                    return reply
+            except Exception as e:
+                logger.error(f"Erro ao chamar Claude CLI: {e}")
+
+        # 1. agy — CLI independente do Antigravity (não precisa do IDE aberto)
+        try:
+            reply = await self._call_agy_cli(
+                task_id=task_id, task_title=task_title, task_prompt=task_prompt,
+                user_message=effective_message, project_name=project_name,
+                project_root=project_root, conversation_id=conversation_id,
+                worktree_path=worktree_path
+            )
+            if reply:
+                return reply
+        except Exception as e:
+            logger.error(f"Erro ao chamar o agy: {e}")
+
+        # 2. agentapi — legado, só funciona com o IDE Antigravity aberto
         agentapi_cmd = self._find_agentapi_cmd()
         if agentapi_cmd:
             try:
@@ -101,6 +212,73 @@ class AssistantService:
         return self._generate_local_reply(
             task_title, task_prompt, history, project_root, effective_message, project_name, git_branch
         )
+
+    async def _call_claude_cli(
+        self,
+        task_id: Optional[str],
+        task_title: str,
+        task_prompt: str,
+        user_message: str,
+        project_name: str,
+        project_root: str,
+        session_id: Optional[str] = None,
+        worktree_path: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Conversa pelo Claude Code CLI local, mantendo a continuidade por sessão.
+        A primeira mensagem cria a sessão com um UUID nosso (--session-id);
+        as seguintes retomam a mesma sessão (--resume), sem reenviar o histórico.
+
+        Trabalha no worktree da tarefa quando ele existe: o agente pode escrever
+        arquivos, e tudo precisa virar diff a ser aprovado — não alteração direta
+        no projeto real. Sem worktree (tarefa não executada), cai no projeto.
+        """
+        claude_cmd = self._find_claude_cmd()
+        if not claude_cmd:
+            return None
+
+        cwd = worktree_path if (worktree_path and os.path.isdir(worktree_path)) else project_root
+
+        known = session_id or (self._claude_sessions.get(task_id) if task_id else None)
+
+        # O chat também é não-interativo: sem o modo explícito, qualquer pedido
+        # de permissão é negado e o agente trava ao escrever arquivo ou rodar
+        # comandos — mesmo com a execução (▶ Rodar) já configurada.
+        modo = getattr(settings, "CLAUDE_PERMISSION_MODE", None) or "bypassPermissions"
+        base = [claude_cmd, "-p", "--permission-mode", modo]
+
+        if known:
+            cmd = base + ["--resume", known, user_message]
+        else:
+            new_session = str(uuid.uuid4())
+            prompt = (
+                f"Você é o Engenheiro de Software Sênior do Agent Orchestrator "
+                f"trabalhando no projeto '{project_name}'. "
+                f"Tarefa: '{task_title}'. Requisito: '{task_prompt}'.\n\n"
+                f"Mensagem do usuário: {user_message}"
+            )
+            cmd = base + ["--session-id", new_session, prompt]
+            known = new_session
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            logger.error(
+                f"Claude CLI retornou {proc.returncode}: "
+                f"{stderr.decode('utf-8', errors='replace')[:500]}"
+            )
+            return None
+
+        if task_id:
+            self._claude_sessions[task_id] = known
+
+        return stdout.decode("utf-8", errors="replace").strip() or None
 
     async def _call_antigravity_cli(
         self,

@@ -30,6 +30,8 @@ interface ImportConversationModalProps {
   isOpen: boolean;
   onClose: () => void;
   onTaskImported: (task: Task) => void;
+  /** Chamado após uma importação em lote, para a tela recarregar a lista. */
+  onBulkImported?: () => void;
 }
 
 export const ImportConversationModal: React.FC<ImportConversationModalProps> = ({
@@ -37,12 +39,16 @@ export const ImportConversationModal: React.FC<ImportConversationModalProps> = (
   isOpen,
   onClose,
   onTaskImported,
+  onBulkImported,
 }) => {
   const [conversations, setConversations] = useState<AntigravityConversationItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [importingId, setImportingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
 
   const fetchConversations = async () => {
     setLoading(true);
@@ -60,9 +66,40 @@ export const ImportConversationModal: React.FC<ImportConversationModalProps> = (
   useEffect(() => {
     if (isOpen) {
       setSearchQuery('');
+      setSelected(new Set());
+      setBulkResult(null);
       fetchConversations();
     }
   }, [isOpen, project.id]);
+
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleImportSelected = async (ids: string[]) => {
+    if (ids.length === 0 || bulkImporting) return;
+    setBulkImporting(true);
+    setError(null);
+    setBulkResult(null);
+    try {
+      const res = await api.importAntigravityBulk(project.id, ids);
+      const partes = [`${res.imported} importada(s)`];
+      if (res.skipped > 0) partes.push(`${res.skipped} já existia(m)`);
+      if (res.failed.length > 0) partes.push(`${res.failed.length} falhou/falharam`);
+      setBulkResult(partes.join(' · '));
+      setSelected(new Set());
+      await fetchConversations();
+      onBulkImported?.();
+    } catch (err: any) {
+      setError(err.message || 'Falha ao importar em lote.');
+    } finally {
+      setBulkImporting(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -176,6 +213,39 @@ export const ImportConversationModal: React.FC<ImportConversationModalProps> = (
           </button>
         </div>
 
+        {/* Ações em lote */}
+        {(() => {
+          const pendentes = filtered.filter((c) => !c.already_imported);
+          const todasMarcadas = pendentes.length > 0 && pendentes.every((c) => selected.has(c.conversation_id));
+          if (pendentes.length === 0) return null;
+          return (
+            <div className="px-4 py-2.5 border-b border-[#222534] bg-[#141620] flex items-center gap-3">
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={todasMarcadas}
+                  onChange={() =>
+                    setSelected(todasMarcadas ? new Set() : new Set(pendentes.map((c) => c.conversation_id)))
+                  }
+                  className="accent-purple-500"
+                />
+                Selecionar todas ({pendentes.length} pendentes)
+              </label>
+
+              {bulkResult && <span className="text-xs text-emerald-300">{bulkResult}</span>}
+
+              <button
+                onClick={() => handleImportSelected(Array.from(selected))}
+                disabled={selected.size === 0 || bulkImporting}
+                className="ml-auto flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium bg-purple-600 hover:bg-purple-500 text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {bulkImporting ? <Loader2 size={13} className="animate-spin" /> : <ArrowRight size={13} />}
+                Importar selecionadas ({selected.size})
+              </button>
+            </div>
+          );
+        })()}
+
         {/* Alerta de Erro */}
         {error && (
           <div className="mx-4 mt-3 p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs">
@@ -208,6 +278,16 @@ export const ImportConversationModal: React.FC<ImportConversationModalProps> = (
                       : 'bg-[#181a26] border-[#25293a] hover:border-purple-500/40 hover:bg-[#1c1f2e]'
                   }`}
                 >
+                  {!item.already_imported && (
+                    <input
+                      type="checkbox"
+                      checked={selected.has(item.conversation_id)}
+                      onChange={() => toggleSelected(item.conversation_id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="accent-purple-500 shrink-0 mt-1 md:mt-0"
+                      title="Selecionar para importar em lote"
+                    />
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-xs text-white truncate max-w-[340px]">

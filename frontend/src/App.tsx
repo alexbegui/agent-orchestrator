@@ -12,6 +12,7 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Modals state
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
@@ -56,10 +57,10 @@ export default function App() {
     }
   };
 
-  // Carrega tarefas do projeto ativo
+  // Carrega tarefas do projeto ativo — ou de todos, quando '__ALL__'
   const loadTasks = async (projId: string) => {
     try {
-      const data = await api.getTasks(projId);
+      const data = projId === '__ALL__' ? await api.getAllTasks() : await api.getTasks(projId);
       setTasks(data);
     } catch (err) {
       console.error('Failed to load tasks', err);
@@ -104,6 +105,25 @@ export default function App() {
       setSelectedTask(null);
     }
   }, [activeProjectId]);
+
+  const handleRefreshStates = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      const res = await api.refreshStates();
+      if (activeProjectId) await loadTasks(activeProjectId);
+      const msg =
+        res.fixed.length > 0
+          ? `${res.checked} verificadas · ${res.fixed.length} corrigida(s)`
+          : `${res.checked} verificadas · tudo certo`;
+      setSyncAllFeedback(msg);
+      setTimeout(() => setSyncAllFeedback(null), 4000);
+    } catch (err: any) {
+      alert(`⚠️ Falha ao verificar: ${err.message || 'erro desconhecido'}`);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const handleSyncAllTasks = async (isManual = true) => {
     if (isSyncingAll) return;
@@ -258,6 +278,16 @@ export default function App() {
                   {syncAllFeedback}
                 </span>
               )}
+
+              <button
+                onClick={handleRefreshStates}
+                disabled={isRefreshing}
+                className="bg-[#1a1d2c] hover:bg-[#23273a] text-emerald-300 hover:text-emerald-200 border border-emerald-500/30 hover:border-emerald-500/60 font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs shadow-sm transition disabled:opacity-50"
+                title="Confere todos os agentes neste instante e corrige estados errados, sem esperar o ciclo automático"
+              >
+                <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
+                <span>{isRefreshing ? 'Verificando...' : 'Verificar agora'}</span>
+              </button>
 
               <button
                 onClick={() => handleSyncAllTasks(true)}
@@ -451,7 +481,7 @@ export default function App() {
                 >
                   <option value="assistant">✨ Assistente Integrado (Recomendado - Direto no Navegador)</option>
                   <option value="claude">Claude Code CLI (Requer 'claude' no PATH)</option>
-                  <option value="agy">Antigravity / Gemini CLI (Requer 'agy' no PATH)</option>
+                  <option value="agy">Antigravity CLI (agy — conta Google, sem API key)</option>
                   <option value="custom">Comando Customizado</option>
                 </select>
               </div>
@@ -568,6 +598,7 @@ export default function App() {
           isOpen={isImportModalOpen}
           onClose={() => setIsImportModalOpen(false)}
           onTaskImported={handleTaskImported}
+          onBulkImported={() => activeProjectId && loadTasks(activeProjectId)}
         />
       )}
     </div>

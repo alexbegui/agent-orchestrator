@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Mock — Painel Geral em escala real</title>
+<style>
+  :root{--bg:#090a0f;--panel:#12141c;--card:#1a1d28;--border:#262a3b;--soft:#1c2030;--muted:#8a93a8}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:#fff;padding:24px 28px 60px;
+    font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+  .mockbar{background:#1e1b14;border:1px solid #4a3a16;color:#e8c979;
+    padding:8px 14px;border-radius:8px;font-size:12px;margin-bottom:22px}
+  h1{font-size:19px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:22px}
+
+  .band{background:var(--panel);border:1px solid var(--border);
+    border-radius:12px;padding:14px 16px;margin-bottom:16px}
+  .band.urgent{border-color:rgba(245,158,11,.45)}
+  .bhead{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+  .dot{width:9px;height:9px;border-radius:50%}
+  .btitle{font-size:12px;font-weight:600;letter-spacing:.055em;color:#cbd5e1}
+  .count{margin-left:auto;font:11px ui-monospace,monospace;color:var(--muted);
+    background:var(--bg);padding:2px 9px;border-radius:5px}
+  .hint{font-size:11px;color:var(--muted);margin:-4px 0 11px}
+
+  /* ── TOPO DA FILA: um só, detalhado ── */
+  .focus{background:var(--card);border:1px solid rgba(245,158,11,.55);
+    border-radius:9px;padding:13px 15px;margin-bottom:11px}
+  .ftag{font-size:9.5px;letter-spacing:.09em;color:#f59e0b;font-weight:700;
+    text-transform:uppercase;margin-bottom:7px}
+  .top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .proj{font:10.5px ui-monospace,monospace;color:#94a3b8}
+  .name{font-size:13px;font-weight:500}
+  .agent{font:10px ui-monospace,monospace;padding:2px 7px;border-radius:999px;
+    border:1px solid var(--border);color:#cbd5e1;background:var(--bg)}
+  .elapsed{margin-left:auto;font:11px ui-monospace,monospace;color:#fbbf24}
+  .asked{border-left:2px solid #334155;padding:3px 0 3px 10px;margin:8px 0 0;
+    color:#9fb0c7;font-size:12px}
+  .asked b{color:#64748b;font-weight:600;font-size:10px;letter-spacing:.07em;
+    display:block;margin-bottom:2px;text-transform:uppercase}
+  .reply{margin-top:9px;padding:9px 11px;border-radius:7px;background:var(--bg);
+    border:1px solid rgba(245,158,11,.3);font-size:12px;color:#fcd9a0}
+  .reply .lbl{font-size:10px;color:var(--muted);display:block;margin-bottom:3px}
+
+  /* ── RESTO DA FILA: linhas compactas ── */
+  .row{display:flex;align-items:center;gap:10px;padding:7px 9px;border-radius:6px;
+    font-size:12.5px;cursor:pointer;border:1px solid transparent}
+  .row:hover{background:var(--card);border-color:var(--border)}
+  .kind{width:15px;text-align:center;font-size:11px}
+  .rproj{font:10.5px ui-monospace,monospace;color:#94a3b8;width:108px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rname .req{color:var(--muted);font-size:11.5px}
+  .ragent{font:9.5px ui-monospace,monospace;color:#64748b;width:78px;text-align:right}
+  .rtime{font:11px ui-monospace,monospace;color:var(--muted);width:72px;text-align:right}
+  .rtime.hot{color:#fbbf24}
+
+  .more{font-size:11.5px;color:#60a5fa;padding:8px 9px 2px;cursor:pointer}
+
+  .prow{display:flex;align-items:center;gap:14px;padding:8px 2px;
+    border-bottom:1px solid var(--soft);font-size:12.5px;cursor:pointer}
+  .prow:last-child{border-bottom:none}
+  .pname{width:140px;font-weight:500}
+  .bar{flex:1;height:7px;background:var(--bg);border-radius:4px;overflow:hidden;
+    border:1px solid var(--soft);max-width:220px}
+  .fill{height:100%;background:#10b981}
+  .pstat{color:var(--muted);font-size:11.5px;white-space:nowrap}
+  .pstat .w{color:#fbbf24}.pstat .r{color:#60a5fa}
+</style>
+</head>
+<body>
+
+<div class="mockbar">
+  ⚠️ <b>Mock estático</b> — 5 projetos, 23 tarefas. Mesma ideia do mock anterior, em escala real.
+</div>
+
+<h1>Painel Geral</h1>
+<div class="sub">5 projetos · 7 esperando você · 9 rodando</div>
+
+<!-- ───── BLOCO 1 ───── -->
+<div class="band urgent">
+  <div class="bhead">
+    <span class="dot" style="background:#f59e0b"></span>
+    <span class="btitle">ESPERANDO VOCÊ</span>
+    <span class="count">7</span>
+  </div>
+  <div class="hint">Ordenado por tempo parado — o mais antigo primeiro.</div>
+
+  <div class="focus">
+    <div class="ftag">▸ próximo a resolver</div>
+    <div class="top">
+      <span class="proj">Geotecnia /</span>
+      <span class="name">migrar camada silver</span>
+      <span class="agent">Claude</span>
+      <span class="elapsed">parado há 1h04</span>
+    </div>
+    <div class="asked">
+      <b>você pediu</b>
+      Migrar a camada silver para o novo schema de sondagem, mantendo
+      compatibilidade com os relatórios existentes.
+    </div>
+    <div class="reply">
+      <span class="lbl">última resposta do agente</span>
+      A coluna <code>prof_final</code> virou <code>profundidade_final</code> no schema
+      novo, mas 3 relatórios ainda usam o nome antigo. Renomeio tudo ou crio uma view?
+    </div>
+  </div>
+
+  <div class="row"><span class="kind">❓</span><span class="rproj">DataLake</span>
+    <span class="rname">particionar bronze <span class="req">— particionar a bronze por data de ingestão</span></span>
+    <span class="ragent">Antigravity</span><span class="rtime hot">47min</span></div>
+
+  <div class="row"><span class="kind">✓</span><span class="rproj">DataLake</span>
+    <span class="rname">corrigir ETL sem cabeçalho <span class="req">— diff pronto, 2 arquivos</span></span>
+    <span class="ragent">Antigravity</span><span class="rtime">31min</span></div>
+
+  <div class="row"><span class="kind">❓</span><span class="rproj">Orquestrador</span>
+    <span class="rname">escolha de modelo por tarefa <span class="req">— qual default para o Antigravity?</span></span>
+    <span class="ragent">Claude</span><span class="rtime">22min</span></div>
+
+  <div class="row"><span class="kind">✓</span><span class="rproj">Geotecnia</span>
+    <span class="rname">validar sondagens duplicadas <span class="req">— diff pronto, 1 arquivo</span></span>
+    <span class="ragent">Claude</span><span class="rtime">14min</span></div>
+
+  <div class="row"><span class="kind">⚠</span><span class="rproj">Relatorios</span>
+    <span class="rname">exportar PDF mensal <span class="req">— falhou: dependência ausente</span></span>
+    <span class="ragent">Antigravity</span><span class="rtime">9min</span></div>
+
+  <div class="row"><span class="kind">❓</span><span class="rproj">Portal</span>
+    <span class="rname">login por SSO <span class="req">— usar Azure AD ou Google?</span></span>
+    <span class="ragent">Claude</span><span class="rtime">4min</span></div>
+</div>
+
+<!-- ───── BLOCO 2 ───── -->
+<div class="band">
+  <div class="bhead">
+    <span class="dot" style="background:#3b82f6"></span>
+    <span class="btitle">RODANDO</span>
+    <span class="count">9</span>
+  </div>
+  <div class="hint">Nada a fazer aqui — é só para você saber o que está em voo.</div>
+
+  <div class="row"><span class="kind">●</span><span class="rproj">Orquestrador</span>
+    <span class="rname">ligar dashboard WS <span class="req">— ligar o WS global e criar a visão cross-projeto</span></span>
+    <span class="ragent">Claude</span><span class="rtime">3m12s</span></div>
+  <div class="row"><span class="kind">●</span><span class="rproj">DataLake</span>
+    <span class="rname">criar camada gold <span class="req">— agregações mensais por obra</span></span>
+    <span class="ragent">Antigravity</span><span class="rtime">2m48s</span></div>
+  <div class="row"><span class="kind">●</span><span class="rproj">Geotecnia</span>
+    <span class="rname">importar ensaios SPT <span class="req">— ler planilhas legadas do SPT</span></span>
+    <span class="ragent">Claude</span><span class="rtime">2m01s</span></div>
+  <div class="row"><span class="kind">●</span><span class="rproj">Relatorios</span>
+    <span class="rname">gráfico de produtividade <span class="req">— gráfico mensal por equipe</span></span>
+    <span class="ragent">Antigravity</span><span class="rtime">1m33s</span></div>
+  <div class="row"><span class="kind">●</span><span class="rproj">Portal</span>
+    <span class="rname">tela de cadastro <span class="req">— formulário com validação</span></span>
+    <span class="ragent">Claude</span><span class="rtime">0m52s</span></div>
+
+  <div class="more">▾ mostrar as outras 4</div>
+</div>
+
+<!-- ───── BLOCO 3 ───── -->
+<div class="band">
+  <div class="bhead">
+    <span class="dot" style="background:#10b981"></span>
+    <span class="btitle">PROJETOS</span>
+    <span class="count">5</span>
+  </div>
+
+  <div class="prow"><span class="pname">DataLake</span>
+    <span class="bar"><span class="fill" style="width:44%"></span></span>
+    <span class="pstat">4 feitas · <span class="r">2 rodando</span> · <span class="w">2 em você</span> · 1 na fila</span></div>
+  <div class="prow"><span class="pname">Orquestrador</span>
+    <span class="bar"><span class="fill" style="width:62%"></span></span>
+    <span class="pstat">5 feitas · <span class="r">2 rodando</span> · <span class="w">1 em você</span></span></div>
+  <div class="prow"><span class="pname">Geotecnia</span>
+    <span class="bar"><span class="fill" style="width:20%"></span></span>
+    <span class="pstat">1 feita · <span class="r">2 rodando</span> · <span class="w">2 em você</span> · 4 na fila</span></div>
+  <div class="prow"><span class="pname">Relatorios</span>
+    <span class="bar"><span class="fill" style="width:30%"></span></span>
+    <span class="pstat">2 feitas · <span class="r">2 rodando</span> · <span class="w">1 em você</span> · 2 na fila</span></div>
+  <div class="prow"><span class="pname">Portal</span>
+    <span class="bar"><span class="fill" style="width:12%"></span></span>
+    <span class="pstat">1 feita · <span class="r">1 rodando</span> · <span class="w">1 em você</span> · 6 na fila</span></div>
+</div>
+
+</body>
+</html>

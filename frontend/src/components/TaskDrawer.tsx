@@ -38,7 +38,23 @@ interface TaskDrawerProps {
 }
 
 export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpdated, onTaskDeleted }) => {
-  const [activeTab, setActiveTab] = useState<'chat' | 'diff' | 'logs' | 'spec'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'artifacts' | 'diff' | 'logs' | 'spec'>('chat');
+  const [artifacts, setArtifacts] = useState<
+    {
+      name: string;
+      kind: 'markdown' | 'html' | 'other';
+      category: 'documento' | 'mockup' | 'diagrama' | 'imagem' | 'dados' | 'outro';
+      preview: string;
+      size: number;
+      modified_at: number;
+      path: string;
+    }[]
+  >([]);
+  const [openArtifact, setOpenArtifact] = useState<{ name: string; content: string } | null>(null);
+  const [loadingArtifacts, setLoadingArtifacts] = useState(false);
+  const [proposals, setProposals] = useState<string[]>([]);
+  const [approved, setApproved] = useState<Set<string>>(new Set());
+  const [savingKnowledge, setSavingKnowledge] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMsg, setInputMsg] = useState('');
   const [diffText, setDiffText] = useState('');
@@ -61,6 +77,16 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  /** O campo cresce para baixo conforme o texto, até um teto; depois rola. */
+  const MAX_ALTURA_INPUT = 180;
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_ALTURA_INPUT)}px`;
+  }, [inputMsg]);
 
   const handleNewMessage = useCallback((incoming: Message) => {
     setMessages((prev) => {
@@ -82,6 +108,31 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
       chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, isSendingMessage, activeTab, highlightedMsgId]);
+
+  // Carrega a lista de artefatos ao abrir a aba
+  useEffect(() => {
+    if (activeTab !== 'artifacts') return;
+    setLoadingArtifacts(true);
+    setOpenArtifact(null);
+    api
+      .getTaskArtifacts(task.id)
+      .then((res) => setArtifacts(res.artifacts))
+      .catch(console.error)
+      .finally(() => setLoadingArtifacts(false));
+  }, [activeTab, task.id]);
+
+  // Propostas de conhecimento aparecem junto do diff — é lá que o usuário
+  // já está decidindo se aprova o trabalho.
+  useEffect(() => {
+    if (activeTab !== 'diff') return;
+    api
+      .getKnowledgeProposals(task.id)
+      .then((res) => {
+        setProposals(res.proposals);
+        setApproved(new Set()); // nada marcado: o padrão é descartar
+      })
+      .catch(console.error);
+  }, [activeTab, task.id]);
 
   // Carrega diff quando estiver pronto para revisão ou ao abrir aba de diff
   useEffect(() => {
@@ -453,6 +504,17 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
           <MessageSquare size={13} /> Chat Isolado
         </button>
         <button
+          onClick={() => setActiveTab('artifacts')}
+          title="Mockups, specs e análises produzidos nesta tarefa — viram documentação do projeto no merge"
+          className={`px-3 py-2.5 text-xs font-medium border-b-2 transition flex items-center gap-1.5 ${
+            activeTab === 'artifacts'
+              ? 'border-emerald-400 text-emerald-300 font-semibold'
+              : 'border-transparent text-[#8a93a8] hover:text-white'
+          }`}
+        >
+          <FileText size={13} /> Artefatos
+        </button>
+        <button
           onClick={() => setActiveTab('diff')}
           className={`px-3 py-2.5 text-xs font-medium border-b-2 transition flex items-center gap-1.5 ${
             activeTab === 'diff'
@@ -665,7 +727,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                 </div>
               )}
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-end gap-2">
                 <input
                   type="file"
                   ref={fileInputRef}
@@ -690,18 +752,26 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                   {isUploading ? <Loader2 size={15} className="animate-spin text-blue-400" /> : <Paperclip size={15} />}
                 </button>
 
-                <input
-                  type="text"
+                <textarea
+                  ref={textareaRef}
+                  rows={1}
                   value={inputMsg}
                   disabled={isSendingMessage}
                   onChange={(e) => setInputMsg(e.target.value)}
                   onPaste={handlePaste}
+                  onKeyDown={(e) => {
+                    // Enter envia; Shift+Enter quebra linha — convenção de chat.
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage(e as unknown as React.FormEvent);
+                    }
+                  }}
                   placeholder={
                     isSendingMessage
                       ? 'Aguarde o assistente responder...'
-                      : 'Digite uma mensagem, cole imagens (Ctrl+V) ou anexe arquivos...'
+                      : 'Digite uma mensagem (Shift+Enter quebra linha), cole imagens ou anexe arquivos...'
                   }
-                  className="flex-1 bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                  className="flex-1 bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 resize-none overflow-y-auto custom-scroll leading-relaxed"
                 />
 
                 <button
@@ -717,8 +787,196 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
           </div>
         )}
 
+        {activeTab === 'artifacts' && (
+          <div className="space-y-3">
+            <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-[11px] text-emerald-200/90 leading-relaxed">
+              Mockups, specs e análises produzidos nesta tarefa. Ficam em{' '}
+              <code className="bg-[#090a0f] px-1.5 py-0.5 rounded text-emerald-300">.agent/artefatos/</code>{' '}
+              e, no merge, viram documentação do projeto — consultável pelos próximos agentes.
+            </div>
+
+            {loadingArtifacts && (
+              <div className="flex items-center gap-2 text-xs text-[#8a93a8] py-4">
+                <Loader2 size={14} className="animate-spin" /> Carregando artefatos...
+              </div>
+            )}
+
+            {!loadingArtifacts && artifacts.length === 0 && (
+              <div className="py-10 text-center text-xs text-[#8a93a8]">
+                <FileText size={26} className="mx-auto mb-2 opacity-40" />
+                Nenhum artefato ainda.
+                <p className="text-[10px] mt-1.5 max-w-sm mx-auto leading-relaxed">
+                  Peça ao agente para salvar o que produzir em{' '}
+                  <code className="bg-[#090a0f] px-1 rounded">.agent/artefatos/</code> —
+                  por exemplo: "salve esta análise em .agent/artefatos/analise-etl.md".
+                </p>
+              </div>
+            )}
+
+            {!loadingArtifacts &&
+              (
+                [
+                  { id: 'diagrama', label: '🧠 Mapas mentais e diagramas', cor: 'text-fuchsia-300' },
+                  { id: 'mockup', label: '🖼 Mockups e telas', cor: 'text-blue-300' },
+                  { id: 'documento', label: '📄 Documentos e análises', cor: 'text-emerald-300' },
+                  { id: 'imagem', label: '🏞 Imagens', cor: 'text-amber-300' },
+                  { id: 'dados', label: '🗃 Dados', cor: 'text-slate-300' },
+                  { id: 'outro', label: '📎 Outros', cor: 'text-slate-400' },
+                ] as const
+              ).map((grupo) => {
+                const doGrupo = artifacts.filter((a) => a.category === grupo.id);
+                if (doGrupo.length === 0) return null;
+                return (
+                  <div key={grupo.id} className="space-y-2">
+                    <div className={`text-[10px] font-bold uppercase tracking-wide ${grupo.cor} pt-1`}>
+                      {grupo.label} <span className="text-[#8a93a8] font-normal">({doGrupo.length})</span>
+                    </div>
+
+                    {doGrupo.map((a) => {
+                      const aberto = openArtifact?.name === a.name;
+                      const url = api.artifactUrl(task.id, a.name);
+                      const visualizavel = a.kind === 'markdown' || a.category === 'imagem' || a.category === 'mockup';
+                      return (
+                        <div
+                          key={a.name}
+                          className="p-3 rounded-lg bg-[#161824] border border-[#252a3c] hover:border-emerald-500/40 transition"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-medium text-white truncate">{a.name}</div>
+                              {a.preview && (
+                                <div className="text-[10.5px] text-[#8fa0b8] mt-1 line-clamp-2 leading-snug">
+                                  {a.preview}
+                                </div>
+                              )}
+                              <div className="text-[9.5px] font-mono text-[#64748b] mt-1">
+                                {(a.size / 1024).toFixed(1)} KB
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {visualizavel && (
+                                <button
+                                  onClick={async () => {
+                                    if (aberto) return setOpenArtifact(null);
+                                    if (a.kind === 'markdown') {
+                                      try {
+                                        setOpenArtifact(await api.readTaskArtifact(task.id, a.name));
+                                      } catch (err: any) {
+                                        alert(`⚠️ ${err.message || 'Falha ao ler o artefato'}`);
+                                      }
+                                    } else {
+                                      setOpenArtifact({ name: a.name, content: '' });
+                                    }
+                                  }}
+                                  className="text-[10px] px-2.5 py-1 rounded-md bg-[#1a1d28] border border-[#262a3b] text-slate-300 hover:border-emerald-500/50 hover:text-white transition"
+                                >
+                                  {aberto ? 'Fechar' : 'Ver aqui'}
+                                </button>
+                              )}
+                              <a
+                                href={url}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Abrir em uma aba nova do navegador"
+                                className="text-[10px] px-2.5 py-1 rounded-md bg-[#1a1d28] border border-[#262a3b] text-slate-300 hover:border-blue-500/50 hover:text-white transition flex items-center gap-1"
+                              >
+                                <ExternalLink size={10} /> Abrir
+                              </a>
+                            </div>
+                          </div>
+
+                          {aberto && (
+                            <div className="mt-3 pt-3 border-t border-[#252a3c]">
+                              {a.kind === 'markdown' && <MarkdownRenderer content={openArtifact!.content} />}
+                              {a.category === 'imagem' && (
+                                <img src={url} alt={a.name} className="max-w-full rounded-lg border border-[#262a3b]" />
+                              )}
+                              {a.category === 'mockup' && (
+                                <iframe
+                                  src={url}
+                                  title={a.name}
+                                  className="w-full h-[460px] rounded-lg border border-[#262a3b] bg-white"
+                                />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+          </div>
+        )}
+
         {activeTab === 'diff' && (
           <div className="space-y-4">
+            {proposals.length > 0 && (
+              <div className="p-3.5 rounded-lg bg-fuchsia-500/5 border border-fuchsia-500/30">
+                <div className="text-xs font-bold text-fuchsia-200 mb-1">
+                  O agente aprendeu algo e propôs registrar
+                </div>
+                <p className="text-[10.5px] text-fuchsia-300/70 mb-3 leading-relaxed">
+                  Marque só o que vale guardar — vai para o conhecimento do projeto e
+                  os próximos agentes vão ler. Sem marcar nada, é descartado.
+                </p>
+
+                <div className="space-y-2">
+                  {proposals.map((linha) => (
+                    <label
+                      key={linha}
+                      className="flex items-start gap-2.5 p-2 rounded-md bg-[#141620] border border-[#252a3c] cursor-pointer hover:border-fuchsia-500/40 transition"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={approved.has(linha)}
+                        onChange={() =>
+                          setApproved((prev) => {
+                            const next = new Set(prev);
+                            next.has(linha) ? next.delete(linha) : next.add(linha);
+                            return next;
+                          })
+                        }
+                        className="accent-fuchsia-500 mt-0.5"
+                      />
+                      <span className="text-[11px] text-slate-200 leading-snug">{linha}</span>
+                    </label>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 mt-3">
+                  <button
+                    disabled={savingKnowledge}
+                    onClick={async () => {
+                      setSavingKnowledge(true);
+                      try {
+                        const res = await api.approveKnowledge(task.id, Array.from(approved));
+                        setProposals([]);
+                        if (res.registered > 0) {
+                          setSyncFeedback(`${res.registered} linha(s) no conhecimento do projeto`);
+                          setTimeout(() => setSyncFeedback(null), 4000);
+                        }
+                      } catch (err: any) {
+                        alert(`⚠️ ${err.message || 'Falha ao registrar'}`);
+                      } finally {
+                        setSavingKnowledge(false);
+                      }
+                    }}
+                    className="text-[11px] px-3 py-1.5 rounded-md bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-medium transition disabled:opacity-50"
+                  >
+                    {savingKnowledge
+                      ? 'Salvando...'
+                      : approved.size > 0
+                      ? `Registrar ${approved.size}`
+                      : 'Descartar tudo'}
+                  </button>
+                  <span className="text-[10px] text-[#8a93a8]">
+                    {approved.size === 0 && 'nada marcado'}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {task.status === 'REVIEW_READY' && (
               <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between">
                 <div>

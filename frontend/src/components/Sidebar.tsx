@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Project } from '../types';
-import { Folder, Plus, CheckCircle, ShieldCheck, Pencil, X, Loader2 } from 'lucide-react';
+import { Folder, Plus, CheckCircle, ShieldCheck, Pencil, X, Loader2, Layers, Terminal as TerminalIcon } from 'lucide-react';
 import { api } from '../services/api';
 
 interface SidebarProps {
@@ -21,6 +21,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [editName, setEditName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+
+  const handleOpenTerminal = async (project: Project) => {
+    try {
+      await api.openProjectTerminal(project.id);
+    } catch (err: any) {
+      alert(`⚠️ Não foi possível abrir o terminal: ${err.message || 'falha desconhecida'}`);
+    }
+  };
 
   const handleSaveProjectName = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,6 +61,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
         <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scroll pr-1">
+          <div
+            onClick={() => onSelectProject('__ALL__')}
+            className={`w-full text-left p-2.5 rounded-lg border transition flex items-center gap-2 cursor-pointer ${
+              activeProjectId === '__ALL__'
+                ? 'bg-[#1a1d28] border-amber-500/50 text-white'
+                : 'border-transparent text-[#8a93a8] hover:bg-[#1a1d28] hover:text-white'
+            }`}
+          >
+            <Layers size={13} className="shrink-0" />
+            <span className="font-medium text-xs">Todos os projetos</span>
+          </div>
+
           {projects.map((p) => {
             const isActive = p.id === activeProjectId;
             return (
@@ -77,6 +97,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       {p.active_tasks_count}
                     </span>
                   )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenTerminal(p);
+                    }}
+                    title={`Abrir terminal em ${p.root_path}`}
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[#262a3b] text-[#8a93a8] hover:text-emerald-300 transition"
+                  >
+                    <TerminalIcon size={12} />
+                  </button>
                   <button
                     type="button"
                     onClick={(e) => {

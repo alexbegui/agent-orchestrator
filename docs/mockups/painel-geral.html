@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Mock — Painel Geral (Agent Orchestrator)</title>
+<style>
+  :root{
+    --bg:#090a0f; --panel:#12141c; --card:#1a1d28;
+    --border:#262a3b; --border-soft:#1c2030; --muted:#8a93a8;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:#fff; padding:24px 28px 60px;
+    font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif;
+  }
+  .mockbar{
+    background:#1e1b14;border:1px solid #4a3a16;color:#e8c979;
+    padding:8px 14px;border-radius:8px;font-size:12px;margin-bottom:22px;
+  }
+  h1{font-size:19px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:24px}
+
+  .band{
+    background:var(--panel);border:1px solid var(--border);
+    border-radius:12px;padding:14px 16px;margin-bottom:16px;
+  }
+  .band.urgent{border-color:rgba(245,158,11,.45)}
+  .bhead{display:flex;align-items:center;gap:9px;margin-bottom:13px}
+  .dot{width:9px;height:9px;border-radius:50%}
+  .btitle{font-size:12px;font-weight:600;letter-spacing:.055em;color:#cbd5e1}
+  .count{
+    margin-left:auto;font:11px ui-monospace,monospace;color:var(--muted);
+    background:var(--bg);padding:2px 9px;border-radius:5px;
+  }
+
+  .item{
+    background:var(--card);border:1px solid var(--border);
+    border-radius:9px;padding:12px 14px;margin-bottom:9px;cursor:pointer;
+  }
+  .item:last-child{margin-bottom:0}
+  .item.wait{border-color:rgba(245,158,11,.5)}
+  .item.run{border-color:rgba(59,130,246,.5)}
+  .item:hover{border-color:#60a5fa}
+
+  .top{display:flex;align-items:center;gap:9px;margin-bottom:7px;flex-wrap:wrap}
+  .proj{font:10.5px ui-monospace,monospace;color:#94a3b8}
+  .name{font-size:13px;font-weight:500}
+  .agent{
+    font:10px ui-monospace,monospace;padding:2px 7px;border-radius:999px;
+    border:1px solid var(--border);color:#cbd5e1;background:var(--bg);
+  }
+  .elapsed{margin-left:auto;font:11px ui-monospace,monospace;color:var(--muted)}
+
+  /* a incumbência — o que você pediu */
+  .asked{
+    border-left:2px solid #334155;padding:3px 0 3px 10px;margin:7px 0 0;
+    color:#9fb0c7;font-size:12px;
+  }
+  .asked b{color:#64748b;font-weight:600;font-size:10px;letter-spacing:.07em;
+    display:block;margin-bottom:2px;text-transform:uppercase}
+
+  /* o que ele devolveu / está pedindo */
+  .reply{
+    margin-top:9px;padding:9px 11px;border-radius:7px;
+    background:var(--bg);border:1px solid var(--border-soft);font-size:12px;
+  }
+  .reply.q{border-color:rgba(245,158,11,.3);color:#fcd9a0}
+  .reply.ok{border-color:rgba(16,185,129,.3);color:#9fe8c7}
+  .reply .lbl{font-size:10px;color:var(--muted);display:block;margin-bottom:3px}
+
+  /* projetos */
+  .prow{
+    display:flex;align-items:center;gap:14px;padding:9px 2px;
+    border-bottom:1px solid var(--border-soft);font-size:12.5px;cursor:pointer;
+  }
+  .prow:last-child{border-bottom:none}
+  .pname{width:150px;font-weight:500}
+  .bar{flex:1;height:7px;background:var(--bg);border-radius:4px;
+    overflow:hidden;border:1px solid var(--border-soft);max-width:260px}
+  .fill{height:100%;background:#10b981}
+  .pstat{color:var(--muted);font-size:11.5px;white-space:nowrap}
+  .pstat .w{color:#fbbf24}
+  .pstat .r{color:#60a5fa}
+</style>
+</head>
+<body>
+
+<div class="mockbar">
+  ⚠️ <b>Mock estático</b> — dados fictícios, nada aqui funciona. Serve só para você julgar a ideia.
+</div>
+
+<h1>Painel Geral</h1>
+<div class="sub">Tudo que está acontecendo, em todos os projetos.</div>
+
+<!-- ───────── BLOCO 1 ───────── -->
+<div class="band urgent">
+  <div class="bhead">
+    <span class="dot" style="background:#f59e0b"></span>
+    <span class="btitle">ESPERANDO VOCÊ</span>
+    <span class="count">2</span>
+  </div>
+
+  <div class="item wait">
+    <div class="top">
+      <span class="proj">Geotecnia /</span>
+      <span class="name">migrar camada silver</span>
+      <span class="agent">Claude</span>
+      <span class="elapsed">parado há 12min</span>
+    </div>
+    <div class="asked">
+      <b>você pediu</b>
+      Migrar a camada silver para o novo schema de sondagem, mantendo
+      compatibilidade com os relatórios que já existem.
+    </div>
+    <div class="reply q">
+      <span class="lbl">última resposta do agente</span>
+      Antes de migrar preciso confirmar: a coluna <code>prof_final</code> virou
+      <code>profundidade_final</code> no schema novo, mas existem 3 relatórios…
+    </div>
+  </div>
+
+  <div class="item wait">
+    <div class="top">
+      <span class="proj">DataLake /</span>
+      <span class="name">corrigir ETL sem cabeçalho</span>
+      <span class="agent">Antigravity</span>
+      <span class="elapsed">parado há 3min</span>
+    </div>
+    <div class="asked">
+      <b>você pediu</b>
+      Corrigir o ETL que quebra quando o CSV vem sem cabeçalho.
+    </div>
+    <div class="reply ok">
+      <span class="lbl">última resposta do agente</span>
+      Corrigido e testado — 2 arquivos alterados, 34 linhas. Diff pronto para revisar.
+    </div>
+  </div>
+</div>
+
+<!-- ───────── BLOCO 2 ───────── -->
+<div class="band">
+  <div class="bhead">
+    <span class="dot" style="background:#3b82f6"></span>
+    <span class="btitle">RODANDO</span>
+    <span class="count">2</span>
+  </div>
+
+  <div class="item run">
+    <div class="top">
+      <span class="proj">Orquestrador /</span>
+      <span class="name">ligar dashboard WS</span>
+      <span class="agent">Claude</span>
+      <span class="elapsed">3min 12s</span>
+    </div>
+    <div class="asked">
+      <b>você pediu</b>
+      Ligar o WebSocket de dashboard que já existe no backend e criar a visão
+      cross-projeto.
+    </div>
+  </div>
+
+  <div class="item run">
+    <div class="top">
+      <span class="proj">DataLake /</span>
+      <span class="name">criar camada gold</span>
+      <span class="agent">Antigravity</span>
+      <span class="elapsed">0min 40s</span>
+    </div>
+    <div class="asked">
+      <b>você pediu</b>
+      Criar a camada gold de produção a partir da silver, com as agregações
+      mensais por obra.
+    </div>
+  </div>
+</div>
+
+<!-- ───────── BLOCO 3 ───────── -->
+<div class="band">
+  <div class="bhead">
+    <span class="dot" style="background:#10b981"></span>
+    <span class="btitle">PROJETOS</span>
+  </div>
+
+  <div class="prow">
+    <span class="pname">DataLake</span>
+    <span class="bar"><span class="fill" style="width:40%"></span></span>
+    <span class="pstat">2 feitas · <span class="r">1 rodando</span> · <span class="w">1 em você</span> · 1 na fila</span>
+  </div>
+  <div class="prow">
+    <span class="pname">Orquestrador</span>
+    <span class="bar"><span class="fill" style="width:62%"></span></span>
+    <span class="pstat">5 feitas · <span class="r">1 rodando</span> · 2 na fila</span>
+  </div>
+  <div class="prow">
+    <span class="pname">Geotecnia</span>
+    <span class="bar"><span class="fill" style="width:18%"></span></span>
+    <span class="pstat">1 feita · <span class="w">1 em você</span> · 4 na fila</span>
+  </div>
+</div>
+
+</body>
+</html>

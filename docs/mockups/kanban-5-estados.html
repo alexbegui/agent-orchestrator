@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Mock — 5 estados explícitos</title>
+<style>
+  :root{--bg:#090a0f;--panel:#12141c;--card:#1a1d28;--bd:#262a3b;--soft:#1c2030;--mut:#8a93a8}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:#fff;height:100vh;
+    display:flex;flex-direction:column;overflow:hidden;
+    font:13.5px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+
+  .mockbar{background:#1e1b14;border-bottom:1px solid #4a3a16;color:#e8c979;
+    padding:6px 16px;font-size:11.5px;flex-shrink:0}
+
+  .top{padding:13px 20px 11px;flex-shrink:0;display:flex;align-items:center;gap:16px}
+  h1{font-size:17px;margin:0 0 2px}
+  .sub{color:var(--mut);font-size:11.5px}
+  .btn{margin-left:auto;display:flex;align-items:center;gap:7px;
+    background:#1a1d28;border:1px solid #2f3752;color:#cbd5e1;
+    padding:7px 14px;border-radius:9px;font-size:12px;cursor:pointer}
+  .btn:hover{border-color:#60a5fa;color:#fff}
+  .btn .ic{font-size:13px}
+  .btn .hint{font-size:10px;color:var(--mut)}
+
+  .kb{flex:1;display:flex;gap:10px;overflow-x:auto;padding:2px 20px 16px;min-height:0}
+  .col{flex:0 0 264px;display:flex;flex-direction:column;background:var(--panel);
+    border:1px solid var(--bd);border-radius:11px;padding:9px;min-height:0}
+  .col.c-run{border-color:rgba(59,130,246,.45)}
+  .col.c-ask{border-color:rgba(245,158,11,.45)}
+  .col.c-del{border-color:rgba(168,85,247,.45)}
+  .col.c-dead{border-color:rgba(244,63,94,.45)}
+
+  .ch{display:flex;align-items:center;gap:7px;margin-bottom:3px;padding:0 2px;flex-shrink:0}
+  .ch .t{font-weight:700;font-size:11px;color:#fff;letter-spacing:.02em}
+  .ch .n{margin-left:auto;font:10px ui-monospace,monospace;color:var(--mut);
+    background:var(--bg);padding:1px 7px;border-radius:4px}
+  .chsub{font-size:9.5px;color:var(--mut);padding:0 2px;margin-bottom:9px;
+    flex-shrink:0;line-height:1.4;min-height:26px}
+
+  .list{flex:1;overflow-y:auto;padding-right:3px}
+  .list::-webkit-scrollbar{width:6px}
+  .list::-webkit-scrollbar-thumb{background:#2b3047;border-radius:3px}
+
+  .kc{background:var(--card);border:1px solid var(--bd);border-radius:8px;
+    padding:10px 11px;margin-bottom:8px;cursor:pointer}
+  .kc:hover{border-color:#60a5fa}
+  .kc.run{border-left:3px solid #3b82f6}
+  .kc.ask{border-left:3px solid #f59e0b}
+  .kc.del{border-left:3px solid #a855f7}
+  .kc.dead{border-left:3px solid #f43f5e}
+  .kc.ok{border-left:3px solid #10b981}
+  .kc.idle{border-left:3px solid #475569}
+
+  /* ESTADO ESCRITO POR EXTENSO — o pedido do usuário */
+  .state{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;
+    letter-spacing:.03em;margin-bottom:6px;text-transform:uppercase}
+  .state.run{color:#7cb3f7}
+  .state.ask{color:#fbbf24}
+  .state.del{color:#c89bf5}
+  .state.dead{color:#fb7185}
+  .state.ok{color:#34d399}
+  .state.idle{color:#94a3b8}
+  .pulse{width:6px;height:6px;border-radius:50%;background:#60a5fa;
+    animation:p 1.1s ease-in-out infinite;flex-shrink:0}
+  @keyframes p{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.6)}}
+  .sq{width:6px;height:6px;border-radius:2px;flex-shrink:0}
+
+  .proj{font:9.5px ui-monospace,monospace;color:#94a3b8;margin-bottom:3px}
+  .ti{font-size:11.5px;font-weight:500;margin-bottom:6px;line-height:1.35}
+  .as{font-size:9.5px;color:#8fa0b8;border-left:2px solid #2d3247;
+    padding-left:7px;line-height:1.45;margin-bottom:7px}
+
+  .did{background:var(--bg);border:1px solid var(--soft);border-radius:6px;
+    padding:6px 8px;font-size:9.5px;line-height:1.5}
+  .did .lbl{color:#64748b;font-size:8.5px;letter-spacing:.06em;
+    text-transform:uppercase;display:block;margin-bottom:2px}
+  .did.ok{border-color:rgba(16,185,129,.25);color:#a7d9c4}
+  .did.ask{border-color:rgba(245,158,11,.25);color:#fcd9a0}
+  .did.del{border-color:rgba(168,85,247,.25);color:#d9bdf7}
+  .did.bad{border-color:rgba(244,63,94,.25);color:#fbb6c2}
+  .did.work{border-color:rgba(59,130,246,.25);color:#a5c8f0}
+  .stat{font:9px ui-monospace,monospace;margin-top:4px;display:flex;gap:9px}
+  .stat .add{color:#6ee7b7}.stat .del{color:#fca5a5}.stat .f{color:var(--mut)}
+
+  .ft{margin-top:8px;padding-top:6px;border-top:1px solid var(--soft);
+    display:flex;align-items:center;justify-content:space-between;
+    font:9px ui-monospace,monospace;color:var(--mut)}
+  .ft .hot{color:#93c5fd}.ft .warn{color:#fcd34d}
+  .ft .bad{color:#fda4af}.ft .pur{color:#c89bf5}
+</style>
+</head>
+<body>
+
+<div class="mockbar">⚠️ <b>Mock estático</b> — o estado aparece <b>escrito</b> em cada card, não só pela cor.</div>
+
+<div class="top">
+  <div>
+    <h1>Todos os projetos</h1>
+    <div class="sub">3 executando · 2 te perguntaram · 2 entregaram · 1 parou</div>
+  </div>
+  <div class="btn">
+    <span class="ic">⟳</span>
+    <div>
+      <div>Verificar agora</div>
+      <div class="hint">confere todos os agentes neste instante</div>
+    </div>
+  </div>
+</div>
+
+<div class="kb">
+
+  <!-- 1. EXECUTANDO -->
+  <div class="col c-run">
+    <div class="ch"><span class="t">🔵 EXECUTANDO</span><span class="n">3</span></div>
+    <div class="chsub">O agente está trabalhando agora no que você pediu. Nada a fazer.</div>
+    <div class="list">
+
+      <div class="kc run">
+        <div class="state run"><span class="pulse"></span>Executando</div>
+        <div class="proj">Orquestrador</div>
+        <div class="ti">ligar dashboard WS</div>
+        <div class="as">ligar o WS global e criar a visão cross-projeto</div>
+        <div class="did work">
+          <span class="lbl">mexendo em</span>
+          <code>websockets/manager.py</code>, <code>App.tsx</code>
+          <div class="stat"><span class="f">2 arquivos</span>
+            <span class="add">+41</span><span class="del">−8</span></div>
+        </div>
+        <div class="ft"><span>Claude</span><span class="hot">rodando há 4min</span></div>
+      </div>
+
+      <div class="kc run">
+        <div class="state run"><span class="pulse"></span>Executando</div>
+        <div class="proj">DataLake</div>
+        <div class="ti">criar camada gold</div>
+        <div class="as">camada gold com agregações mensais por obra</div>
+        <div class="did work">
+          <span class="lbl">mexendo em</span>
+          <code>gold/agregacoes.sql</code>
+          <div class="stat"><span class="f">1 arquivo</span><span class="add">+67</span></div>
+        </div>
+        <div class="ft"><span>Antigravity</span><span class="hot">rodando há 2min</span></div>
+      </div>
+
+      <div class="kc run">
+        <div class="state run"><span class="pulse"></span>Executando</div>
+        <div class="proj">Portal</div>
+        <div class="ti">tela de cadastro</div>
+        <div class="as">formulário de cadastro com validação</div>
+        <div class="did work">
+          <span class="lbl">mexendo em</span>
+          ainda lendo o projeto
+        </div>
+        <div class="ft"><span>Claude</span><span class="hot">rodando há 52s</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 2. TE PERGUNTOU -->
+  <div class="col c-ask">
+    <div class="ch"><span class="t">🟡 TE PERGUNTOU</span><span class="n">2</span></div>
+    <div class="chsub">Parou e precisa da sua resposta para seguir. Costuma levar segundos.</div>
+    <div class="list">
+
+      <div class="kc ask">
+        <div class="state ask"><span class="sq" style="background:#f59e0b"></span>Te perguntou</div>
+        <div class="proj">Geotecnia</div>
+        <div class="ti">migrar camada silver</div>
+        <div class="as">migrar a silver para o novo schema de sondagem</div>
+        <div class="did ask">
+          <span class="lbl">a pergunta</span>
+          "A coluna <code>prof_final</code> virou <code>profundidade_final</code>, mas 3
+          relatórios usam o nome antigo. Renomeio tudo ou crio uma view?"
+        </div>
+        <div class="ft"><span>Claude</span><span class="warn">parado há 47min</span></div>
+      </div>
+
+      <div class="kc ask">
+        <div class="state ask"><span class="sq" style="background:#f59e0b"></span>Te perguntou</div>
+        <div class="proj">Relatórios</div>
+        <div class="ti">gráfico de produtividade</div>
+        <div class="as">gráfico mensal de produtividade por equipe</div>
+        <div class="did ask">
+          <span class="lbl">a pergunta</span>
+          "Agrupo por equipe ou por obra?"
+        </div>
+        <div class="ft"><span>Claude</span><span class="warn">parado há 6min</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 3. ENTREGOU -->
+  <div class="col c-del">
+    <div class="ch"><span class="t">🟣 ENTREGOU</span><span class="n">2</span></div>
+    <div class="chsub">Terminou e tem diff para você revisar. Reserve mais tempo.</div>
+    <div class="list">
+
+      <div class="kc del">
+        <div class="state del"><span class="sq" style="background:#a855f7"></span>Entregou · revisar</div>
+        <div class="proj">DataLake</div>
+        <div class="ti">particionar bronze</div>
+        <div class="as">particionar a bronze por data de ingestão</div>
+        <div class="did del">
+          <span class="lbl">o que entregou</span>
+          Particionou por <code>dt_ingestao</code> e migrou os dados existentes.
+          <div class="stat"><span class="f">4 arquivos</span>
+            <span class="add">+182</span><span class="del">−31</span></div>
+        </div>
+        <div class="ft"><span>Antigravity</span><span class="pur">entregue há 31min</span></div>
+      </div>
+
+      <div class="kc del">
+        <div class="state del"><span class="sq" style="background:#a855f7"></span>Entregou · revisar</div>
+        <div class="proj">Geotecnia</div>
+        <div class="ti">validar sondagens duplicadas</div>
+        <div class="as">detectar e marcar duplicadas por chave natural</div>
+        <div class="did del">
+          <span class="lbl">o que entregou</span>
+          Criou a checagem e cobriu com testes — 12 passando.
+          <div class="stat"><span class="f">2 arquivos</span>
+            <span class="add">+94</span><span class="del">−3</span></div>
+        </div>
+        <div class="ft"><span>Claude</span><span class="pur">entregue há 2min</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 4. PAROU -->
+  <div class="col c-dead">
+    <div class="ch"><span class="t">🔴 PAROU</span><span class="n">1</span></div>
+    <div class="chsub">Morreu sem concluir — travou, foi morto ou a máquina reiniciou.</div>
+    <div class="list">
+      <div class="kc dead">
+        <div class="state dead"><span class="sq" style="background:#f43f5e"></span>Parou sem concluir</div>
+        <div class="proj">Relatórios</div>
+        <div class="ti">exportar PDF mensal</div>
+        <div class="as">gerar o PDF mensal consolidado por obra</div>
+        <div class="did bad">
+          <span class="lbl">onde parou</span>
+          Instalou dependências e começou o template. O processo encerrou antes
+          de terminar — nada foi perdido, dá para retomar.
+          <div class="stat"><span class="f">1 arquivo</span><span class="add">+23</span></div>
+        </div>
+        <div class="ft"><span>Antigravity</span><span class="bad">processo sumiu</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. CONCLUÍDO -->
+  <div class="col">
+    <div class="ch"><span class="t">🟢 CONCLUÍDO</span><span class="n">2</span></div>
+    <div class="chsub">Revisado e mergeado. Já está no seu projeto.</div>
+    <div class="list">
+      <div class="kc ok">
+        <div class="state ok"><span class="sq" style="background:#10b981"></span>Concluído · mergeado</div>
+        <div class="proj">DataLake</div>
+        <div class="ti">corrigir ETL sem cabeçalho</div>
+        <div class="as">corrigir a quebra quando o CSV vem sem cabeçalho</div>
+        <div class="did ok">
+          <span class="lbl">entregou</span>
+          Detecção de cabeçalho + fallback por posição.
+          <div class="stat"><span class="f">2 arquivos</span>
+            <span class="add">+34</span><span class="del">−6</span></div>
+        </div>
+        <div class="ft"><span>Antigravity</span><span>mergeado há 1h</span></div>
+      </div>
+      <div class="kc ok">
+        <div class="state ok"><span class="sq" style="background:#10b981"></span>Concluído · mergeado</div>
+        <div class="proj">Orquestrador</div>
+        <div class="ti">continuidade de sessão</div>
+        <div class="as">o chat deve falar com o agente que executou a tarefa</div>
+        <div class="did ok">
+          <span class="lbl">entregou</span>
+          <code>--session-id</code> na execução, <code>--resume</code> no chat.
+          <div class="stat"><span class="f">3 arquivos</span>
+            <span class="add">+88</span><span class="del">−12</span></div>
+        </div>
+        <div class="ft"><span>Claude</span><span>mergeado há 3h</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. NA FILA -->
+  <div class="col">
+    <div class="ch"><span class="t">⚪ NA FILA</span><span class="n">2</span></div>
+    <div class="chsub">Ainda não começaram. Esperando você mandar rodar.</div>
+    <div class="list">
+      <div class="kc idle">
+        <div class="state idle"><span class="sq" style="background:#475569"></span>Na fila</div>
+        <div class="proj">Portal</div>
+        <div class="ti">login por SSO</div>
+        <div class="as">login por SSO com Azure AD</div>
+        <div class="ft"><span>—</span><span>✨ lapidar</span></div>
+      </div>
+      <div class="kc idle">
+        <div class="state idle"><span class="sq" style="background:#475569"></span>Na fila</div>
+        <div class="proj">DataLake</div>
+        <div class="ti">retry na ingestão</div>
+        <div class="as">3 tentativas com backoff quando a origem falhar</div>
+        <div class="ft"><span>Claude</span><span>▶ rodar</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -93,6 +93,82 @@ class GitWorktreeService:
         except subprocess.CalledProcessError as e:
             return f"Erro ao obter diff: {e.stderr}"
 
+    def change_stats(self, worktree_path: str) -> dict:
+        """
+        Quanto o agente mexeu: arquivos, linhas somadas e removidas.
+
+        Sai do próprio git — é fato, não interpretação. Conta o que já foi
+        commitado na branch da tarefa MAIS o que ainda está solto, porque o
+        agente nem sempre commita.
+        """
+        vazio = {"files": 0, "added": 0, "removed": 0}
+        if not worktree_path or not os.path.isdir(worktree_path):
+            return vazio
+
+        arquivos, somadas, removidas = set(), 0, 0
+        try:
+            # Mudanças ainda não commitadas
+            res = subprocess.run(
+                ["git", "diff", "HEAD", "--numstat"],
+                cwd=worktree_path, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=15
+            )
+            # Arquivos novos não rastreados não aparecem no diff
+            novos = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                cwd=worktree_path, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=15
+            )
+        except (subprocess.SubprocessError, OSError):
+            return vazio
+
+        for linha in res.stdout.splitlines():
+            partes = linha.split("\t")
+            if len(partes) != 3:
+                continue
+            add, rem, caminho = partes
+            arquivos.add(caminho)
+            somadas += int(add) if add.isdigit() else 0
+            removidas += int(rem) if rem.isdigit() else 0
+
+        for caminho in novos.stdout.splitlines():
+            caminho = caminho.strip()
+            if not caminho or caminho.startswith(".run/"):
+                continue
+            arquivos.add(caminho)
+            try:
+                with open(os.path.join(worktree_path, caminho), "r",
+                          encoding="utf-8", errors="replace") as f:
+                    somadas += sum(1 for _ in f)
+            except OSError:
+                pass
+
+        return {"files": len(arquivos), "added": somadas, "removed": removidas}
+
+    def commit_pendente(self, worktree_path: str, mensagem: str) -> bool:
+        """
+        Commita o que estiver solto no worktree.
+
+        O merge remove a pasta: sem isto, qualquer arquivo não commitado —
+        artefato, código — some sem aviso. Antes, só quem abrisse a aba Diffs
+        tinha esse commit automático.
+        """
+        if not worktree_path or not os.path.isdir(worktree_path):
+            return False
+        try:
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=worktree_path, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", check=True
+            )
+            if not status.stdout.strip():
+                return False
+            self._run_git(["add", "-A"], cwd=worktree_path)
+            self._run_git(["commit", "-m", mensagem], cwd=worktree_path)
+            return True
+        except Exception:
+            return False
+
     def merge_task(
         self,
         project_path: str,
@@ -100,6 +176,14 @@ class GitWorktreeService:
         target_branch: str = "main"
     ) -> bool:
         branch = f"task/{task_id}"
+
+        # Salva o que ainda não foi commitado ANTES de mergear — logo em
+        # seguida a worktree é removida e o que estiver solto se perderia.
+        self.commit_pendente(
+            self.get_worktree_path(project_path, task_id),
+            f"Auto: trabalho pendente da tarefa {task_id[:8]}"
+        )
+
         try:
             # Garante que o projeto principal está na branch alvo
             self._run_git(["checkout", target_branch], cwd=project_path)

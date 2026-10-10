@@ -1,4 +1,5 @@
 import os
+import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,41 @@ from app.api.settings import router as settings_router
 from app.websockets.manager import ws_manager
 
 init_db()
+
+
+def _reconciliar_execucoes():
+    """
+    Descobre o que aconteceu com as tarefas que ficaram marcadas como RUNNING.
+
+    Como os agentes agora são desacoplados, reiniciar o servidor não os mata —
+    mas o orquestrador precisa reencontrá-los para não mostrar estado falso.
+    """
+    from app.core.database import SessionLocal
+    from app.models.task import Task, TaskStatus
+    from app.services.runner_service import RunnerService
+
+    runner = RunnerService()
+
+    db = SessionLocal()
+    try:
+        pendentes = db.query(Task).filter(Task.status == TaskStatus.RUNNING).all()
+        for t in pendentes:
+            if not t.worktree_path:
+                continue
+            novo = runner.reconcile(t.worktree_path)
+            if novo and novo != "RUNNING":
+                t.status = TaskStatus(novo)
+                logging.getLogger("orchestrator").info(
+                    f"Tarefa {t.id} reconciliada: RUNNING -> {novo}"
+                )
+        db.commit()
+    except Exception as e:
+        logging.getLogger("orchestrator").warning(f"Falha ao reconciliar execuções: {e}")
+    finally:
+        db.close()
+
+
+_reconciliar_execucoes()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

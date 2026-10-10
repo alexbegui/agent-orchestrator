@@ -47,6 +47,90 @@ export const api = {
     return handleResponse<Task[]>(res);
   },
 
+  /** Todas as tarefas de todos os projetos — a visão cross-projeto. */
+  async getAllTasks(): Promise<Task[]> {
+    const res = await fetch(`${BASE_URL}/tasks/all`);
+    return handleResponse<Task[]>(res);
+  },
+
+  /** Importa várias conversas do Antigravity de uma vez. Lista vazia = todas as pendentes. */
+  async importAntigravityBulk(
+    projectId: string,
+    conversationIds?: string[]
+  ): Promise<{ imported: number; skipped: number; failed: { conversation_id: string; error: string }[]; task_ids: string[] }> {
+    const res = await fetch(`${BASE_URL}/tasks/import-antigravity-bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, conversation_ids: conversationIds }),
+    });
+    return handleResponse(res);
+  },
+
+  /** Artefatos visíveis desta tarefa (worktree enquanto aberta, projeto depois do merge). */
+  async getTaskArtifacts(taskId: string): Promise<{
+    base: string | null;
+    artifacts: {
+      name: string;
+      kind: 'markdown' | 'html' | 'other';
+      category: 'documento' | 'mockup' | 'diagrama' | 'imagem' | 'dados' | 'outro';
+      preview: string;
+      size: number;
+      modified_at: number;
+      path: string;
+    }[];
+  }> {
+    const res = await fetch(`${BASE_URL}/tasks/${taskId}/artifacts`);
+    return handleResponse(res);
+  },
+
+  /** Linhas de conhecimento que o agente propôs registrar nesta tarefa. */
+  async getKnowledgeProposals(taskId: string): Promise<{ proposals: string[] }> {
+    const res = await fetch(`${BASE_URL}/tasks/${taskId}/knowledge-proposals`);
+    return handleResponse(res);
+  },
+
+  /** Aprova as linhas escolhidas. Lista vazia descarta tudo. */
+  async approveKnowledge(taskId: string, lines: string[]): Promise<{ registered: number }> {
+    const res = await fetch(`${BASE_URL}/tasks/${taskId}/knowledge-proposals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lines }),
+    });
+    return handleResponse(res);
+  },
+
+  /** URL servida pelo backend — o navegador bloqueia file:// vindo de http. */
+  artifactUrl(taskId: string, nome: string): string {
+    return `${BASE_URL}/tasks/${taskId}/artifacts/${encodeURIComponent(nome)}/raw`;
+  },
+
+  async readTaskArtifact(taskId: string, nome: string): Promise<{ name: string; content: string }> {
+    const res = await fetch(`${BASE_URL}/tasks/${taskId}/artifacts/${encodeURIComponent(nome)}`);
+    return handleResponse(res);
+  },
+
+  /** Confere todos os agentes neste instante e corrige estados errados. */
+  async refreshStates(): Promise<{
+    checked: number;
+    fixed: { id: string; title: string; novo_status: string }[];
+    tasks: Task[];
+  }> {
+    const res = await fetch(`${BASE_URL}/tasks/refresh-states`, { method: 'POST' });
+    return handleResponse(res);
+  },
+
+  /** Abre um terminal nativo na pasta do projeto. */
+  async openProjectTerminal(projectId: string): Promise<{ opened_at: string }> {
+    const res = await fetch(`${BASE_URL}/projects/${projectId}/terminal`, { method: 'POST' });
+    return handleResponse<{ opened_at: string }>(res);
+  },
+
+  /** Abre um terminal no worktree da tarefa (ou na pasta do projeto, se ainda não houver). */
+  async openTaskTerminal(taskId: string): Promise<{ opened_at: string }> {
+    const res = await fetch(`${BASE_URL}/tasks/${taskId}/terminal`, { method: 'POST' });
+    return handleResponse<{ opened_at: string }>(res);
+  },
+
   async createTask(
     projectId: string,
     title: string,

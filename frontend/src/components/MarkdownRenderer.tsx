@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { marked } from 'marked';
 import { Copy, Check, Terminal, Code2 } from 'lucide-react';
 
@@ -70,6 +70,53 @@ const CodeBlock: React.FC<{ code: string; lang?: string }> = ({ code, lang }) =>
   );
 };
 
+/**
+ * Bloco ```mermaid vira diagrama de verdade.
+ *
+ * Sem isto, um mapa mental produzido pelo agente apareceria como código cru
+ * — ilegível justamente para o que ele serve.
+ */
+const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const id = useRef(`mmd-${Math.random().toString(36).slice(2)}`);
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const mermaid = (await import('mermaid')).default;
+        mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
+        const { svg } = await mermaid.render(id.current, code);
+        if (!cancelado && ref.current) ref.current.innerHTML = svg;
+      } catch (e: any) {
+        if (!cancelado) setErro(e?.message || 'diagrama inválido');
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, [code]);
+
+  if (erro) {
+    // Não esconde o problema: mostra o código para o usuário entender o que falhou.
+    return (
+      <div className="my-3">
+        <div className="text-[11px] text-amber-300 mb-1.5">
+          Não consegui desenhar este diagrama ({erro}). Código original:
+        </div>
+        <CodeBlock code={code} lang="mermaid" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-3 p-4 rounded-lg border border-[#262a3b] bg-[#0c0d14] overflow-x-auto custom-scroll">
+      <div ref={ref} className="flex justify-center [&_svg]:max-w-full [&_svg]:h-auto" />
+    </div>
+  );
+};
+
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className = '' }) => {
   // Separa trechos comuns de blocos de código com cercas ```
   const parts: ParsedPart[] = [];
@@ -108,6 +155,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
     <div className={`space-y-1 ${className}`}>
       {parts.map((part, index) => {
         if (part.type === 'code') {
+          const lang = (part.lang || '').toLowerCase();
+          if (lang === 'mermaid' || lang === 'mindmap') {
+            return <MermaidBlock key={index} code={part.content} />;
+          }
           return <CodeBlock key={index} code={part.content} lang={part.lang} />;
         }
 

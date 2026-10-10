@@ -1,23 +1,128 @@
-<!-- Standalone Project Mockup Reference: See brain/orchestrator_mockup.html for interactive artifact -->
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent Orchestrator - Mockup</title>
-  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockups — Agent Orchestrator</title>
+<style>
+  :root{--bg:#090a0f;--panel:#12141c;--card:#1a1d28;--bd:#262a3b;--soft:#1c2030;--mut:#8a93a8}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:#fff;padding:34px 30px 70px;
+    font:14px/1.6 ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+  .wrap{max-width:900px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 4px}
+  .sub{color:var(--mut);font-size:12.5px;margin-bottom:8px}
+  .tip{background:#111a26;border:1px solid #1e3a52;color:#9ec5e8;
+    padding:9px 13px;border-radius:9px;font-size:12px;margin-bottom:26px}
+  .tip code{background:var(--bg);padding:1px 6px;border-radius:4px;color:#93c5fd;font-size:11.5px}
+
+  .sec{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+    color:#64748b;font-weight:700;margin:26px 0 10px}
+
+  a.item{display:block;text-decoration:none;background:var(--card);
+    border:1px solid var(--bd);border-radius:11px;padding:15px 17px;
+    margin-bottom:10px;transition:border-color .15s,transform .15s}
+  a.item:hover{border-color:#60a5fa;transform:translateX(2px)}
+  a.item.new{border-color:rgba(16,185,129,.4)}
+  .row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .nm{font-size:14px;font-weight:600;color:#fff}
+  .badge{font-size:9px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;
+    padding:2px 7px;border-radius:999px}
+  .badge.new{background:rgba(16,185,129,.18);color:#6ee7b7}
+  .badge.click{background:rgba(59,130,246,.18);color:#93c5fd}
+  .badge.old{background:#1e2333;color:#8a93a8}
+  .file{margin-left:auto;font:10px ui-monospace,monospace;color:#64748b}
+  .desc{font-size:12.5px;color:#9fb0c7;margin-top:6px;line-height:1.55}
+  .ans{font-size:11.5px;color:var(--mut);margin-top:7px;padding-top:7px;
+    border-top:1px solid var(--soft)}
+  .ans b{color:#cbd5e1;font-weight:600}
+</style>
 </head>
-<body class="bg-slate-950 text-slate-100 p-8 font-sans">
-  <div class="max-w-4xl mx-auto space-y-6">
-    <div class="p-6 bg-slate-900 border border-slate-800 rounded-2xl">
-      <h1 class="text-2xl font-bold text-white mb-2">Agent Orchestrator — Visual Prototype</h1>
-      <p class="text-sm text-slate-400">
-        O mockup interativo principal foi gerado nos artefatos da sessão:
-        <a href="file:///C:/Users/alex.asbp/.gemini/antigravity/brain/8994646e-16ee-4c51-8860-7bdf050cd91c/orchestrator_mockup.html" class="text-blue-400 underline font-mono">
-          orchestrator_mockup.html
-        </a>
-      </p>
-    </div>
+<body>
+<div class="wrap">
+
+  <h1>Mockups do Agent Orchestrator</h1>
+  <div class="sub">Protótipos estáticos — nenhum deles funciona de verdade. Servem para decidir antes de construir.</div>
+
+  <div class="tip">
+    💡 Para abrir esta página rapidinho depois: dê dois cliques em
+    <code>docs\mockups\index.html</code> no Explorer, ou arraste o arquivo para o navegador.
+    Vale favoritar.
   </div>
+
+  <div class="sec">Mais recentes — estados do card</div>
+
+  <a class="item new" href="kanban-5-estados.html">
+    <div class="row">
+      <span class="nm">Kanban com 5 estados explícitos</span>
+      <span class="badge new">atual</span>
+      <span class="file">kanban-5-estados.html</span>
+    </div>
+    <div class="desc">
+      O estado escrito por extenso em cada card — EXECUTANDO, TE PERGUNTOU, ENTREGOU,
+      PAROU, CONCLUÍDO, NA FILA — mais o botão “⟳ Verificar agora”.
+    </div>
+    <div class="ans"><b>Responde:</b> o que está rodando agora, o que espera resposta
+      minha, e o que terminou e preciso revisar.</div>
+  </a>
+
+  <a class="item" href="kanban-acompanhamento.html">
+    <div class="row">
+      <span class="nm">Kanban com “o que o agente fez”</span>
+      <span class="file">kanban-acompanhamento.html</span>
+    </div>
+    <div class="desc">
+      Versão anterior, com 4 colunas. Introduz a caixa que mostra o que o agente fez
+      e quantos arquivos/linhas mexeu.
+    </div>
+    <div class="ans"><b>Responde:</b> o que foi feito em cada tarefa, sem abrir o diff.</div>
+  </a>
+
+  <a class="item" href="cards-estados.html">
+    <div class="row">
+      <span class="nm">Estados do card, lado a lado</span>
+      <span class="file">cards-estados.html</span>
+    </div>
+    <div class="desc">
+      Quatro cards isolados para comparar: executando, esperando você, parou sem
+      concluir e concluído.
+    </div>
+    <div class="ans"><b>Responde:</b> como distinguir uma tarefa viva de uma que morreu.</div>
+  </a>
+
+  <div class="sec">Painel geral — a ideia que originou tudo</div>
+
+  <a class="item" href="prototipo-completo.html">
+    <div class="row">
+      <span class="nm">Protótipo completo</span>
+      <span class="badge click">clicável</span>
+      <span class="file">prototipo-completo.html</span>
+    </div>
+    <div class="desc">
+      Navegável: painel geral, adiados, kanban e o drawer da tarefa com as 4 abas.
+      Clique na sidebar e nos cards para andar entre as telas.
+    </div>
+    <div class="ans"><b>Responde:</b> como seria o fluxo inteiro do dia, do painel até a conversa.</div>
+  </a>
+
+  <a class="item" href="painel-geral-escala.html">
+    <div class="row">
+      <span class="nm">Painel geral em escala real</span>
+      <span class="file">painel-geral-escala.html</span>
+    </div>
+    <div class="desc">5 projetos, 23 tarefas. Mostra como a fila se comporta cheia.</div>
+    <div class="ans"><b>Responde:</b> isso vira uma parede de texto quando eu tiver muitas tarefas?</div>
+  </a>
+
+  <a class="item" href="painel-geral.html">
+    <div class="row">
+      <span class="nm">Painel geral — primeira ideia</span>
+      <span class="badge old">histórico</span>
+      <span class="file">painel-geral.html</span>
+    </div>
+    <div class="desc">Versão inicial com poucos itens. Guardado só como referência.</div>
+  </a>
+
+</div>
 </body>
 </html>
