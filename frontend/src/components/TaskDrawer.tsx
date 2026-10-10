@@ -42,7 +42,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
   const [artifacts, setArtifacts] = useState<
     {
       name: string;
-      kind: 'markdown' | 'html' | 'other';
+      kind: 'markdown' | 'html' | 'mermaid' | 'other';
       category: 'documento' | 'mockup' | 'diagrama' | 'imagem' | 'dados' | 'outro';
       preview: string;
       size: number;
@@ -835,7 +835,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                     {doGrupo.map((a) => {
                       const aberto = openArtifact?.name === a.name;
                       const url = api.artifactUrl(task.id, a.name);
-                      const visualizavel = a.kind === 'markdown' || a.category === 'imagem' || a.category === 'mockup';
+                      const textual = a.kind === 'markdown' || a.kind === 'mermaid';
+                      const visualizavel = textual || a.category === 'imagem' || a.category === 'mockup';
                       return (
                         <div
                           key={a.name}
@@ -858,7 +859,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                                 <button
                                   onClick={async () => {
                                     if (aberto) return setOpenArtifact(null);
-                                    if (a.kind === 'markdown') {
+                                    if (textual) {
                                       try {
                                         setOpenArtifact(await api.readTaskArtifact(task.id, a.name));
                                       } catch (err: any) {
@@ -888,6 +889,11 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                           {aberto && (
                             <div className="mt-3 pt-3 border-t border-[#252a3c]">
                               {a.kind === 'markdown' && <MarkdownRenderer content={openArtifact!.content} />}
+                              {/* .mmd é mermaid puro: embrulha numa cerca para o
+                                  renderizador desenhar, em vez de mostrar texto */}
+                              {a.kind === 'mermaid' && (
+                                <MarkdownRenderer content={'```mermaid\n' + openArtifact!.content + '\n```'} />
+                              )}
                               {a.category === 'imagem' && (
                                 <img src={url} alt={a.name} className="max-w-full rounded-lg border border-[#262a3b]" />
                               )}

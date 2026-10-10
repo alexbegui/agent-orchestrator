@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Project, Task } from './types';
 import { api } from './services/api';
+import { useDashboardWebSocket } from './hooks/useDashboardWebSocket';
 import { Sidebar } from './components/Sidebar';
 import { KanbanBoard } from './components/KanbanBoard';
 import { TaskDrawer } from './components/TaskDrawer';
@@ -22,7 +23,9 @@ export default function App() {
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
-  const [newTaskRunner, setNewTaskRunner] = useState('assistant');
+  // Padrão no Claude: o "assistente integrado" não escreve código, e tê-lo
+  // como padrão fazia toda tarefa nova nascer sem conseguir implementar nada.
+  const [newTaskRunner, setNewTaskRunner] = useState('claude');
 
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
@@ -105,6 +108,19 @@ export default function App() {
       setSelectedTask(null);
     }
   }, [activeProjectId]);
+
+  // Recarrega quando o backend avisa que algo mudou — em vez de esperar
+  // o ciclo de 20s. A ref evita reconectar o socket a cada render.
+  const activeProjectRef = useRef(activeProjectId);
+  useEffect(() => {
+    activeProjectRef.current = activeProjectId;
+  }, [activeProjectId]);
+
+  const { connected: liveConnected } = useDashboardWebSocket(
+    useCallback(() => {
+      if (activeProjectRef.current) loadTasks(activeProjectRef.current);
+    }, [])
+  );
 
   const handleRefreshStates = async () => {
     if (isRefreshing) return;
@@ -308,6 +324,26 @@ export default function App() {
                 <span>Importar do Antigravity</span>
               </button>
 
+              <span
+                title={
+                  liveConnected
+                    ? 'Conectado ao painel em tempo real — os cards mudam assim que algo acontece'
+                    : 'Sem conexão em tempo real — os cards atualizam a cada 20s'
+                }
+                className={`flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded-md border ${
+                  liveConnected
+                    ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/5'
+                    : 'text-[#8a93a8] border-[#262a3b] bg-[#12141c]'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    liveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                  }`}
+                />
+                {liveConnected ? 'ao vivo' : 'offline'}
+              </span>
+
               <button
                 onClick={() => setIsNewTaskModalOpen(true)}
                 className="bg-blue-600 hover:bg-blue-500 text-white font-medium px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs shadow-sm transition"
@@ -479,9 +515,9 @@ export default function App() {
                   onChange={(e) => setNewTaskRunner(e.target.value)}
                   className="w-full bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                 >
-                  <option value="assistant">✨ Assistente Integrado (Recomendado - Direto no Navegador)</option>
-                  <option value="claude">Claude Code CLI (Requer 'claude' no PATH)</option>
-                  <option value="agy">Antigravity CLI (agy — conta Google, sem API key)</option>
+                  <option value="claude">✅ Claude Code CLI (Recomendado — escreve código no worktree)</option>
+                  <option value="agy">✅ Antigravity CLI (agy — conta Google, sem API key)</option>
+                  <option value="assistant">💬 Só conversar (não escreve código)</option>
                   <option value="custom">Comando Customizado</option>
                 </select>
               </div>

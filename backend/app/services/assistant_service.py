@@ -619,43 +619,33 @@ class AssistantService:
         worktree_path: str,
         log_callback
     ) -> bool:
-        await log_callback("[Assistente Integrado] Inicializando execução da tarefa...")
-        await log_callback(f"[Assistente] Escopo: {task_title}")
-        await log_callback(f"[Worktree] Pasta isolada: {worktree_path}")
+        """
+        O Assistente Integrado NÃO implementa código.
 
-        gemini_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None)
+        Antes, esta função escrevia um TASK_IMPLEMENTATION.md com o prompt do
+        usuário de volta, commitava, e declarava "[Sucesso] Tarefa pronta!" —
+        sem ter feito nada. O usuário abria o diff e encontrava só esse arquivo.
 
-        doc_path = os.path.join(worktree_path, "TASK_IMPLEMENTATION.md")
-        content = (
-            f"# Tarefa: {task_title}\n\n"
-            f"## Requisitos & Especificação\n{prompt}\n\n"
-            f"## Registro de Execução\n"
-            f"- Data: {os.environ.get('DATE', 'Hoje')}\n"
-            f"- Ambiente: Worktree isolada do Agent Orchestrator\n"
-            f"- Status: Implementação registrada e pronta para validação.\n"
+        Agora ela diz a verdade. Declarar entrega sem entregar é pior do que
+        não entregar: manda o usuário caçar o motivo num diff vazio.
+        """
+        await log_callback(f"[Assistente Integrado] Tarefa: {task_title}")
+        await log_callback(f"[Worktree] Pasta isolada criada em: {worktree_path}")
+        await log_callback("")
+        await log_callback(
+            "[Atenção] O Assistente Integrado não implementa código — ele só "
+            "conversa. Nenhum arquivo foi criado ou alterado."
         )
-        try:
-            with open(doc_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            await log_callback("[Assistente] Gerado arquivo de entrega: TASK_IMPLEMENTATION.md")
-        except Exception as e:
-            await log_callback(f"[Aviso] Falha ao escrever arquivo: {e}")
+        await log_callback("")
+        await log_callback("Para o agente escrever código de verdade nesta tarefa:")
+        await log_callback(
+            "  1. Crie a tarefa escolhendo 'Claude Code CLI' ou 'Antigravity CLI (agy)'"
+        )
+        await log_callback(
+            "  2. Ou converse na aba Chat — lá o agente trabalha no worktree isolado"
+        )
 
-        if gemini_key:
-            await log_callback("[Gemini API] Chave oficial configurada! Sintetizando artefatos com Gemini 2.0...")
-        else:
-            await log_callback("[Dica] Para IA generativa plena criar código automaticamente, adicione GEMINI_API_KEY nas Configurações.")
-
-        import subprocess
-        try:
-            subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=False, capture_output=True)
-            subprocess.run(["git", "commit", "-m", f"feat(agent): {task_title}"], cwd=worktree_path, check=False, capture_output=True)
-            await log_callback("[Git] Snapshot de código commitado na branch isolada da tarefa.")
-        except Exception as e:
-            await log_callback(f"[Git] {e}")
-
-        await log_callback("[Sucesso] Tarefa pronta! Abra a aba 'Diffs & Revisão' para inspecionar e aprovar o merge.")
-        return True
+        return False
 
     def get_task_conversation_id(self, task_id: str) -> Optional[str]:
         return self._task_conversations.get(task_id)

@@ -23,6 +23,8 @@ MAX_PROPOSTAS = 3
 KINDS = {
     ".md": "markdown", ".markdown": "markdown",
     ".html": "html", ".htm": "html",
+    # Mermaid puro, sem markdown ao redor: a UI desenha direto.
+    ".mmd": "mermaid",
 }
 
 # Categoria é o que o usuário vê agrupado na aba. "Mapa mental" não é
@@ -40,6 +42,7 @@ CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
     ".md": "text/markdown; charset=utf-8", ".markdown": "text/markdown; charset=utf-8",
     ".txt": "text/plain; charset=utf-8",
+    ".mmd": "text/plain; charset=utf-8",
     ".svg": "image/svg+xml",
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
     ".gif": "image/gif", ".webp": "image/webp",

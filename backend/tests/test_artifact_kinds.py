@@ -48,6 +48,24 @@ def test_markdown_com_mermaid_e_classificado_como_diagrama(pasta):
     assert cats["mapa-databricks.md"] == "diagrama"
 
 
+def test_mmd_solto_e_reconhecido_como_mermaid(pasta):
+    """
+    Um .mmd é mermaid puro, sem markdown ao redor. Precisa de um tipo próprio
+    para a UI saber que dá para desenhar — senão aparece listado sem preview.
+    """
+    svc = ArtifactService()
+    _criar(pasta, "mapa-databricks.mmd", "mindmap\n  root((Databricks))")
+
+    item = next(a for a in svc.listar(pasta) if a["name"] == "mapa-databricks.mmd")
+    assert item["kind"] == "mermaid"
+    assert item["category"] == "diagrama"
+
+
+def test_mmd_tem_content_type_de_texto(pasta):
+    """Sem isso o navegador baixaria o arquivo em vez de exibir."""
+    assert ArtifactService().content_type("x.mmd").startswith("text/plain")
+
+
 def test_svg_tambem_e_diagrama(pasta):
     svc = ArtifactService()
     _criar(pasta, "fluxo.svg", "<svg></svg>")

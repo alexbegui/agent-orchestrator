@@ -383,11 +383,19 @@ async def _responder_e_desmarcar(db: Session, task: Task, coro):
     """
     Garante que a marca saia mesmo se o agente falhar — senão o card ficaria
     dizendo "executando" para sempre por causa de um erro.
+
+    Avisa o painel ao terminar: é o sinal de que a bola voltou para o usuário.
+    Sem o aviso, o card só mudaria no próximo ciclo de 20s.
     """
     try:
         return await coro
     finally:
         _marcar_chat_ocupado(db, task, ocupado=False)
+        await ws_manager.broadcast_dashboard({
+            "type": "TASK_UPDATED",
+            "task_id": task.id,
+            "project_id": task.project_id,
+        })
 
 
 def _to_response(task: Task, db: Session) -> TaskResponse:
@@ -599,6 +607,19 @@ def refresh_states(db: Session = Depends(get_db)):
     """
     corrigidas = []
     tarefas = db.query(Task).all()
+
+    # Religa worktrees órfãs: a pasta existe no disco mas a tarefa não a
+    # conhece, então tudo que o agente produziu fica invisível no painel.
+    # O nome é previsível (task-<id>), então dá para reencontrar.
+    for t in tarefas:
+        if t.worktree_path or not t.project:
+            continue
+        candidato = git_service.get_worktree_path(t.project.root_path, t.id)
+        if os.path.isdir(candidato):
+            t.worktree_path = candidato
+            if not t.git_branch:
+                t.git_branch = f"task/{t.id}"
+            corrigidas.append({"id": t.id, "title": t.title, "novo_status": "worktree religada"})
 
     for t in tarefas:
         if t.status != TaskStatus.RUNNING or not t.worktree_path:
@@ -970,6 +991,11 @@ async def send_task_message(task_id: str, data: MessageCreate, background_tasks:
     # Marca a tarefa como ocupada ANTES de chamar o agente: é esse sinal que
     # faz o card mostrar "Executando" enquanto o usuário está em outra tarefa.
     _marcar_chat_ocupado(db, task, ocupado=True)
+    await ws_manager.broadcast_dashboard({
+        "type": "TASK_BUSY",
+        "task_id": task.id,
+        "project_id": task.project_id,
+    })
 
     reply_text = await _responder_e_desmarcar(
         db, task,

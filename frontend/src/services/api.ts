@@ -71,7 +71,7 @@ export const api = {
     base: string | null;
     artifacts: {
       name: string;
-      kind: 'markdown' | 'html' | 'other';
+      kind: 'markdown' | 'html' | 'mermaid' | 'other';
       category: 'documento' | 'mockup' | 'diagrama' | 'imagem' | 'dados' | 'outro';
       preview: string;
       size: number;
