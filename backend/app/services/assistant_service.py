@@ -7,6 +7,7 @@ import logging
 from typing import Optional, List, Dict, Any
 import httpx
 from app.core.config import settings
+from app.core.cli_paths import find_agy
 from app.models.message import Message, MessageRole
 
 logger = logging.getLogger("orchestrator.assistant")
@@ -39,13 +40,9 @@ class AssistantService:
         """
         Localiza o CLI independente do Antigravity. Diferente do agentapi, ele
         não exige o IDE aberto nem ANTIGRAVITY_LS_ADDRESS/CSRF_TOKEN.
+        Resolução completa (PATH + local do instalador) em app.core.cli_paths.
         """
-        for name in ["agy", "agy.exe"]:
-            found = shutil.which(name)
-            if found:
-                return found
-        padrao = os.path.expanduser("~/AppData/Local/agy/bin/agy.exe")
-        return padrao if os.path.exists(padrao) else None
+        return find_agy()
 
     async def _call_agy_cli(
         self,

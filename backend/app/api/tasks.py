@@ -608,6 +608,19 @@ def refresh_states(db: Session = Depends(get_db)):
     corrigidas = []
     tarefas = db.query(Task).all()
 
+    # Corrige o ramo base gravado errado: "main" é só o padrão do formulário
+    # e nunca foi conferido. Num repo que usa master, isso quebra o merge.
+    projetos = db.query(Project).all()
+    for p in projetos:
+        real = git_service.branch_base(p.root_path)
+        if real and real != p.default_branch:
+            antigo = p.default_branch
+            p.default_branch = real
+            corrigidas.append({
+                "id": p.id, "title": p.name,
+                "novo_status": f"ramo base {antigo} → {real}",
+            })
+
     # Religa worktrees órfãs: a pasta existe no disco mas a tarefa não a
     # conhece, então tudo que o agente produziu fica invisível no painel.
     # O nome é previsível (task-<id>), então dá para reencontrar.

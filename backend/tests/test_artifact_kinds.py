@@ -33,7 +33,7 @@ def test_separa_documento_de_mockup_e_imagem(pasta):
     _criar(pasta, "mockup-tela.html", "<html><body>oi</body></html>")
     _criar(pasta, "foto.png")
 
-    cats = {a["name"]: a["category"] for a in svc.listar(pasta)}
+    cats = {os.path.basename(a["name"]): a["category"] for a in svc.listar(pasta)}
     assert cats["analise.md"] == "documento"
     assert cats["mockup-tela.html"] == "mockup"
     assert cats["foto.png"] == "imagem"
@@ -44,7 +44,7 @@ def test_markdown_com_mermaid_e_classificado_como_diagrama(pasta):
     svc = ArtifactService()
     _criar(pasta, "mapa-databricks.md", "# Mapa\n\n```mermaid\nmindmap\n  root((Databricks))\n```")
 
-    cats = {a["name"]: a["category"] for a in svc.listar(pasta)}
+    cats = {os.path.basename(a["name"]): a["category"] for a in svc.listar(pasta)}
     assert cats["mapa-databricks.md"] == "diagrama"
 
 
@@ -56,7 +56,7 @@ def test_mmd_solto_e_reconhecido_como_mermaid(pasta):
     svc = ArtifactService()
     _criar(pasta, "mapa-databricks.mmd", "mindmap\n  root((Databricks))")
 
-    item = next(a for a in svc.listar(pasta) if a["name"] == "mapa-databricks.mmd")
+    item = next(a for a in svc.listar(pasta) if os.path.basename(a["name"]) == "mapa-databricks.mmd")
     assert item["kind"] == "mermaid"
     assert item["category"] == "diagrama"
 
@@ -69,7 +69,7 @@ def test_mmd_tem_content_type_de_texto(pasta):
 def test_svg_tambem_e_diagrama(pasta):
     svc = ArtifactService()
     _criar(pasta, "fluxo.svg", "<svg></svg>")
-    cats = {a["name"]: a["category"] for a in svc.listar(pasta)}
+    cats = {os.path.basename(a["name"]): a["category"] for a in svc.listar(pasta)}
     assert cats["fluxo.svg"] == "diagrama"
 
 
@@ -77,7 +77,7 @@ def test_dados_tem_categoria_propria(pasta):
     svc = ArtifactService()
     _criar(pasta, "resultado.json", "{}")
     _criar(pasta, "tabela.csv", "a,b")
-    cats = {a["name"]: a["category"] for a in svc.listar(pasta)}
+    cats = {os.path.basename(a["name"]): a["category"] for a in svc.listar(pasta)}
     assert cats["resultado.json"] == "dados"
     assert cats["tabela.csv"] == "dados"
 
@@ -99,7 +99,7 @@ def test_le_bytes_para_servir_imagem(pasta):
     with open(os.path.join(destino, "a.png"), "wb") as f:
         f.write(b"\x89PNG\r\n")
 
-    assert svc.ler_bytes(pasta, "a.png") == b"\x89PNG\r\n"
+    assert svc.ler_bytes(pasta, os.path.join(ARTIFACT_DIR, "a.png")) == b"\x89PNG\r\n"
 
 
 def test_ler_bytes_tambem_recusa_caminho_que_escapa(pasta):
@@ -112,5 +112,7 @@ def test_primeira_linha_util_vira_resumo_do_documento(pasta):
     svc = ArtifactService()
     _criar(pasta, "analise.md", "# Análise do ETL\n\nO ETL quebrava porque...")
 
-    item = next(a for a in svc.listar(pasta) if a["name"] == "analise.md")
+    item = next(a for a in svc.listar(pasta) if os.path.basename(a["name"]) == "analise.md")
     assert "Análise do ETL" in item["preview"]
+
+

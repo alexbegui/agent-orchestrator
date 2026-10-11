@@ -8,6 +8,7 @@ import logging
 from typing import AsyncGenerator, Optional, Union
 
 from app.core.config import settings
+from app.core.cli_paths import find_agy, find_agentapi
 from app.services.run_registry import run_registry
 
 logger = logging.getLogger("orchestrator.runner")
@@ -36,18 +37,12 @@ class RunnerService:
 
     @staticmethod
     def _agy_padrao() -> Optional[str]:
-        """
-        Local padrão do instalador do agy. Checar existência importa: uma string
-        não-vazia é sempre verdadeira num `or`, o que tornaria o resto da cascata
-        inalcançável e devolveria um caminho que não existe.
-        """
-        caminho = os.path.expanduser("~/AppData/Local/agy/bin/agy.exe")
-        return caminho if os.path.exists(caminho) else None
+        """Resolução completa do agy — ver app.core.cli_paths.find_agy."""
+        return find_agy()
 
     @staticmethod
     def _agentapi_padrao() -> Optional[str]:
-        caminho = os.path.expanduser("~/.gemini/antigravity/bin/agentapi.bat")
-        return caminho if os.path.exists(caminho) else None
+        return find_agentapi()
 
     def resolve_cli_command(self, runner_type: str, prompt: str, config: Optional[dict] = None) -> list[str]:
         cfg = config or {}
@@ -74,7 +69,7 @@ class RunnerService:
             return args
         elif any(k in cli_choice for k in ["agy", "gemini", "antigravity", "agentapi"]):
             # O `agy` é o CLI independente: não exige o IDE aberto nem token CSRF.
-            agy = shutil.which("agy") or shutil.which("agy.exe") or self._agy_padrao()
+            agy = self._agy_padrao()
             if agy:
                 args = [agy, "-p", "--dangerously-skip-permissions"]
                 conv_id = cfg.get("antigravity_conversation_id")
@@ -87,11 +82,7 @@ class RunnerService:
 
             # Fallback legado: o agentapi embutido no IDE, que só funciona com
             # o Antigravity aberto e com ANTIGRAVITY_LS_ADDRESS/CSRF_TOKEN no ambiente.
-            agentapi = (
-                shutil.which("agentapi.bat")
-                or shutil.which("agentapi")
-                or self._agentapi_padrao()
-            )
+            agentapi = self._agentapi_padrao()
             if agentapi:
                 return [agentapi, "new-conversation", "--model=flash", prompt]
 

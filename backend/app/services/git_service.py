@@ -21,6 +21,54 @@ class GitWorktreeService:
             check=True
         )
 
+    def branch_base(self, project_path: str) -> str:
+        """
+        Descobre o ramo principal do repositório em vez de supor "main".
+
+        O projeto real do usuário usa `master`; supor `main` fazia o merge
+        tentar um checkout inexistente e a detecção de artefatos commitados
+        falhar em silêncio.
+        """
+        if not project_path or not os.path.isdir(project_path):
+            return "main"
+
+        # O que o remoto aponta como padrão é a resposta mais confiável.
+        try:
+            res = subprocess.run(
+                ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+                cwd=project_path, capture_output=True, text=True, timeout=10
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                return res.stdout.strip().split("/")[-1]
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+        # Sem remoto: a primeira dos nomes usuais que existir de verdade.
+        for nome in ("main", "master", "trunk", "develop", "desenvolvimento"):
+            try:
+                res = subprocess.run(
+                    ["git", "rev-parse", "--verify", "--quiet", nome],
+                    cwd=project_path, capture_output=True, text=True, timeout=10
+                )
+                if res.returncode == 0:
+                    return nome
+            except (subprocess.SubprocessError, OSError):
+                break
+
+        # Último recurso: o ramo em que o repositório principal está agora.
+        try:
+            res = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=project_path, capture_output=True, text=True, timeout=10
+            )
+            atual = res.stdout.strip()
+            if res.returncode == 0 and atual and not atual.startswith("task/"):
+                return atual
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+        return "main"
+
     def get_worktree_path(self, project_path: str, task_id: str) -> str:
         return os.path.abspath(os.path.join(project_path, ".worktrees", f"task-{task_id}"))
 
@@ -32,17 +80,42 @@ class GitWorktreeService:
     ) -> str:
         branch = branch_name or f"task/{task_id}"
         worktree_path = self.get_worktree_path(project_path, task_id)
-        
-        # Cria diretório pai .worktrees se não existir
+
         os.makedirs(os.path.dirname(worktree_path), exist_ok=True)
 
-        # Se a worktree já existir, remove antes de recriar
+        # Worktree válida já existente é REAPROVEITADA.
+        #
+        # Antes, rodar de novo removia a pasta e recriava a branch com `-B`,
+        # destruindo tudo que o agente já tinha feito — arquivos soltos e
+        # commits da branch. Era a causa de artefatos "sumirem" entre execuções.
+        if self._worktree_valida(worktree_path):
+            return worktree_path
+
+        # Pasta órfã ou corrompida: aí sim não há o que preservar.
         if os.path.exists(worktree_path):
             self.remove_worktree(project_path, task_id)
 
-        # Adiciona a worktree com branch dedicada
-        self._run_git(["worktree", "add", "-B", branch, worktree_path], cwd=project_path)
+        # `-B` só na criação: reaproveita a branch se ela já existir com trabalho.
+        try:
+            self._run_git(["worktree", "add", worktree_path, branch], cwd=project_path)
+        except subprocess.CalledProcessError:
+            # A branch ainda não existe — cria a partir do HEAD atual.
+            self._run_git(["worktree", "add", "-b", branch, worktree_path], cwd=project_path)
+
         return worktree_path
+
+    def _worktree_valida(self, worktree_path: str) -> bool:
+        """Pasta existe E o git ainda a reconhece como worktree."""
+        if not os.path.isdir(worktree_path):
+            return False
+        try:
+            res = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                cwd=worktree_path, capture_output=True, text=True, timeout=15
+            )
+            return res.returncode == 0 and res.stdout.strip() == "true"
+        except (subprocess.SubprocessError, OSError):
+            return False
 
     def remove_worktree(self, project_path: str, task_id: str) -> bool:
         worktree_path = self.get_worktree_path(project_path, task_id)

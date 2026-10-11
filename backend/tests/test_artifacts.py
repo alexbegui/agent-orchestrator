@@ -32,7 +32,7 @@ def test_lista_artefatos_da_pasta(pasta):
     _criar(pasta, "mockup-kanban.html", "<html></html>")
     _criar(pasta, "spec-migracao.md", "# Spec")
 
-    nomes = [a["name"] for a in svc.listar(pasta)]
+    nomes = [os.path.basename(a["name"]) for a in svc.listar(pasta)]
     assert "mockup-kanban.html" in nomes
     assert "spec-migracao.md" in nomes
 
@@ -47,7 +47,7 @@ def test_classifica_o_tipo_para_a_ui_saber_como_abrir(pasta):
     _criar(pasta, "b.html")
     _criar(pasta, "c.png")
 
-    tipos = {a["name"]: a["kind"] for a in svc.listar(pasta)}
+    tipos = {os.path.basename(a["name"]): a["kind"] for a in svc.listar(pasta)}
     assert tipos["a.md"] == "markdown"
     assert tipos["b.html"] == "html"
     assert tipos["c.png"] == "other"
@@ -56,7 +56,7 @@ def test_classifica_o_tipo_para_a_ui_saber_como_abrir(pasta):
 def test_le_o_conteudo_de_um_artefato(pasta):
     svc = ArtifactService()
     _criar(pasta, "spec.md", "# Título\n\ncorpo")
-    assert "# Título" in svc.ler(pasta, "spec.md")
+    assert "# Título" in svc.ler(pasta, os.path.join(ARTIFACT_DIR, "spec.md"))
 
 
 def test_recusa_caminho_que_escapa_da_pasta(pasta):
@@ -113,3 +113,5 @@ def test_contexto_para_o_agente_e_curto_e_so_o_indice(pasta):
 
 def test_projeto_sem_conhecimento_nao_injeta_nada(pasta):
     assert ArtifactService().contexto_para_prompt(pasta) == ""
+
+

@@ -1,5 +1,6 @@
 import os
 import logging
+import subprocess
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("orchestrator.artifacts")
@@ -53,6 +54,29 @@ CONTENT_TYPES = {
 # Um .md pode ser texto comum OU um mapa mental/diagrama. Decide pelo conteúdo.
 MARCAS_DE_DIAGRAMA = ("```mermaid", "~~~mermaid", "```mindmap")
 
+# O que conta como artefato. Código fica de fora: para ele existe a aba Diffs.
+EXTENSOES_DE_ARTEFATO = set(CATEGORIAS_POR_EXT) | {".mmd"}
+
+# Ruído que nunca é artefato do usuário.
+IGNORAR = (
+    ".run/",           # metadados de execução do orquestrador
+    "_proposto.md",    # rascunho de conhecimento, ainda não aprovado
+    "node_modules/",
+    ".git/",
+    "venv/",
+    "dist/",
+    "__pycache__/",
+)
+
+# Gerados por ferramenta, não produzidos pelo agente para você ler.
+# O diff já mostra que mudaram; na aba de artefatos são só ruído.
+NOMES_IGNORADOS = {
+    "package-lock.json", "package.json", "yarn.lock", "pnpm-lock.yaml",
+    "poetry.lock", "composer.lock", "cargo.lock", "gemfile.lock",
+    "tsconfig.json", "tsconfig.node.json", "jsconfig.json",
+    "manifest.json", ".eslintrc.json", ".prettierrc.json",
+}
+
 # Teto do que vai no prompt. Se o índice passar disso, é sinal de poda —
 # não de aumentar o limite.
 MAX_CONTEXTO = 4000
@@ -74,23 +98,33 @@ class ArtifactService:
         return os.path.join(base, INDEX_FILE)
 
     def listar(self, base: str) -> List[Dict[str, Any]]:
-        pasta = self.dir(base)
-        if not base or not os.path.isdir(pasta):
+        """
+        Tudo que a tarefa produziu, onde quer que esteja.
+
+        Exigir uma pasta combinada não funciona: o agente salva onde faz
+        sentido para ele — `docs/`, normalmente. O git sabe quais arquivos
+        esta tarefa criou ou alterou; filtramos os que são documento.
+        """
+        if not base or not os.path.isdir(base):
             return []
 
+        relativos = set()
+        relativos.update(self._do_git(base))
+        relativos.update(self._da_pasta_combinada(base))
+
         itens = []
-        for nome in sorted(os.listdir(pasta)):
-            caminho = os.path.join(pasta, nome)
+        for rel in sorted(relativos):
+            caminho = os.path.join(base, rel)
             if not os.path.isfile(caminho):
                 continue
-            ext = os.path.splitext(nome)[1].lower()
+            ext = os.path.splitext(rel)[1].lower()
             try:
                 st = os.stat(caminho)
             except OSError:
                 continue
             categoria, preview = self._classificar(caminho, ext)
             itens.append({
-                "name": nome,
+                "name": rel.replace("\\", "/"),
                 "kind": KINDS.get(ext, "other"),
                 "category": categoria,
                 "preview": preview,
@@ -99,6 +133,61 @@ class ArtifactService:
                 "path": caminho,
             })
         return itens
+
+    def _e_documento(self, rel: str) -> bool:
+        """Artefato é documento. Código é o que a aba Diffs mostra."""
+        rel_norm = rel.replace("\\", "/")
+        if any(p in rel_norm for p in IGNORAR):
+            return False
+        if os.path.basename(rel_norm).lower() in NOMES_IGNORADOS:
+            return False
+        return os.path.splitext(rel_norm)[1].lower() in EXTENSOES_DE_ARTEFATO
+
+    def _da_pasta_combinada(self, base: str) -> List[str]:
+        """A pasta sugerida continua valendo — e é a única fonte sem git."""
+        pasta = self.dir(base)
+        if not os.path.isdir(pasta):
+            return []
+        achados = []
+        for raiz, _, arquivos in os.walk(pasta):
+            for nome in arquivos:
+                rel = os.path.relpath(os.path.join(raiz, nome), base)
+                if self._e_documento(rel):
+                    achados.append(rel)
+        return achados
+
+    def _do_git(self, base: str) -> List[str]:
+        """
+        Documentos que esta tarefa criou ou alterou — commitados ou não.
+        Um README que já existia antes não conta: não é obra desta tarefa.
+        """
+        # A base não é sempre "main": o projeto do usuário usa master, e supor
+        # errado fazia o diff falhar calado, escondendo artefatos commitados.
+        from app.services.git_service import GitWorktreeService
+        base_branch = GitWorktreeService().branch_base(base)
+
+        achados = []
+        comandos = [
+            # ainda não rastreados
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            # alterados em relação ao último commit
+            ["git", "diff", "HEAD", "--name-only"],
+            # commitados nesta branch, em relação à base
+            ["git", "diff", f"{base_branch}...HEAD", "--name-only"],
+        ]
+        for cmd in comandos:
+            try:
+                res = subprocess.run(
+                    cmd, cwd=base, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=15
+                )
+            except (subprocess.SubprocessError, OSError):
+                continue
+            for linha in res.stdout.splitlines():
+                rel = linha.strip()
+                if rel and self._e_documento(rel):
+                    achados.append(rel)
+        return achados
 
     def _classificar(self, caminho: str, ext: str) -> tuple:
         """
@@ -148,13 +237,18 @@ class ArtifactService:
 
     def _resolver(self, base: str, nome: str) -> str:
         """
-        Impede que um nome como `../../.env` leia qualquer arquivo da máquina.
-        O caminho resolvido precisa continuar dentro da pasta de artefatos.
+        Os nomes agora são relativos à raiz (ex.: `docs/mapa.md`), porque o
+        agente salva onde quer. A guarda continua: o caminho resolvido precisa
+        ficar dentro da base, senão um `../../.env` leria qualquer arquivo.
         """
-        pasta = os.path.abspath(self.dir(base))
-        alvo = os.path.abspath(os.path.join(pasta, nome))
-        if os.path.commonpath([pasta, alvo]) != pasta:
-            raise ValueError(f"Caminho fora da pasta de artefatos: {nome}")
+        raiz = os.path.abspath(base)
+        alvo = os.path.abspath(os.path.join(raiz, nome))
+        try:
+            if os.path.commonpath([raiz, alvo]) != raiz:
+                raise ValueError(f"Caminho fora do projeto: {nome}")
+        except ValueError:
+            # commonpath levanta quando os caminhos estão em discos diferentes
+            raise ValueError(f"Caminho fora do projeto: {nome}")
         return alvo
 
     def ler(self, base: str, nome: str) -> Optional[str]:

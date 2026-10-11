@@ -33,8 +33,18 @@ def get_settings():
     g_preview = f"{gemini_key[:6]}...{gemini_key[-4:]}" if gemini_key and len(gemini_key) > 10 else None
     a_preview = f"{anthropic_key[:6]}...{anthropic_key[-4:]}" if anthropic_key and len(anthropic_key) > 10 else None
 
-    has_agy = bool(_assistant_checker._find_agentapi_cmd())
-    agy_status = "Ativo (Google Pro via agentapi)" if has_agy else "Não detectado"
+    # O `agy` é o caminho principal hoje; o agentapi só vale como legado. Checar
+    # apenas o agentapi marcava "Não detectado" numa máquina com o agy instalado.
+    agy = _assistant_checker._find_agy_cmd()
+    agentapi = None if agy else _assistant_checker._find_agentapi_cmd()
+
+    has_agy = bool(agy or agentapi)
+    if agy:
+        agy_status = "Ativo (Antigravity CLI — agy)"
+    elif agentapi:
+        agy_status = "Ativo (Google Pro via agentapi, requer o IDE aberto)"
+    else:
+        agy_status = "Não detectado"
 
     return SettingsStatus(
         has_gemini_key=bool(gemini_key),

@@ -109,9 +109,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     }
   }, [messages, isSendingMessage, activeTab, highlightedMsgId]);
 
-  // Carrega a lista de artefatos ao abrir a aba
-  useEffect(() => {
-    if (activeTab !== 'artifacts') return;
+  const carregarArtefatos = useCallback(() => {
     setLoadingArtifacts(true);
     setOpenArtifact(null);
     api
@@ -119,7 +117,14 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
       .then((res) => setArtifacts(res.artifacts))
       .catch(console.error)
       .finally(() => setLoadingArtifacts(false));
-  }, [activeTab, task.id]);
+  }, [task.id]);
+
+  // Carrega ao abrir a aba. O agente pode criar arquivo a qualquer momento,
+  // por isso o botão de recarregar logo abaixo.
+  useEffect(() => {
+    if (activeTab !== 'artifacts') return;
+    carregarArtefatos();
+  }, [activeTab, carregarArtefatos]);
 
   // Propostas de conhecimento aparecem junto do diff — é lá que o usuário
   // já está decidindo se aprova o trabalho.
@@ -789,10 +794,20 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
         {activeTab === 'artifacts' && (
           <div className="space-y-3">
-            <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-[11px] text-emerald-200/90 leading-relaxed">
-              Mockups, specs e análises produzidos nesta tarefa. Ficam em{' '}
-              <code className="bg-[#090a0f] px-1.5 py-0.5 rounded text-emerald-300">.agent/artefatos/</code>{' '}
-              e, no merge, viram documentação do projeto — consultável pelos próximos agentes.
+            <div className="flex items-start gap-2">
+              <div className="flex-1 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-[11px] text-emerald-200/90 leading-relaxed">
+                Mockups, specs, mapas mentais e análises que esta tarefa produziu —
+                onde quer que o agente tenha salvado. No merge, viram documentação do
+                projeto, consultável pelos próximos agentes.
+              </div>
+              <button
+                onClick={carregarArtefatos}
+                disabled={loadingArtifacts}
+                title="Recarregar — o agente pode ter criado algo agora"
+                className="shrink-0 p-2.5 rounded-lg bg-[#161824] border border-[#252a3c] text-slate-400 hover:text-emerald-300 hover:border-emerald-500/40 transition disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={loadingArtifacts ? 'animate-spin' : ''} />
+              </button>
             </div>
 
             {loadingArtifacts && (
@@ -806,9 +821,9 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                 <FileText size={26} className="mx-auto mb-2 opacity-40" />
                 Nenhum artefato ainda.
                 <p className="text-[10px] mt-1.5 max-w-sm mx-auto leading-relaxed">
-                  Peça ao agente para salvar o que produzir em{' '}
-                  <code className="bg-[#090a0f] px-1 rounded">.agent/artefatos/</code> —
-                  por exemplo: "salve esta análise em .agent/artefatos/analise-etl.md".
+                  Peça ao agente para salvar o que produzir — por exemplo:
+                  "salve este mapa mental em docs/mapa.md". Qualquer documento que a
+                  tarefa criar aparece aqui, em qualquer pasta.
                 </p>
               </div>
             )}
@@ -844,7 +859,14 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0 flex-1">
-                              <div className="text-xs font-medium text-white truncate">{a.name}</div>
+                              <div className="text-xs font-medium text-white truncate">
+                                {a.name.split('/').pop()}
+                              </div>
+                              {a.name.includes('/') && (
+                                <div className="text-[9.5px] font-mono text-[#64748b] truncate">
+                                  {a.name.slice(0, a.name.lastIndexOf('/'))}/
+                                </div>
+                              )}
                               {a.preview && (
                                 <div className="text-[10.5px] text-[#8fa0b8] mt-1 line-clamp-2 leading-snug">
                                   {a.preview}
