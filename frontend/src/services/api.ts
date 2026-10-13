@@ -77,6 +77,7 @@ export const api = {
       size: number;
       modified_at: number;
       path: string;
+      outside_task?: boolean;
     }[];
   }> {
     const res = await fetch(`${BASE_URL}/tasks/${taskId}/artifacts`);
@@ -281,5 +282,6 @@ export const api = {
     return handleResponse(res);
   },
 };
+
 
 

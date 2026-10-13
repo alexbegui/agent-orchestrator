@@ -48,6 +48,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
       size: number;
       modified_at: number;
       path: string;
+      outside_task?: boolean;
     }[]
   >([]);
   const [openArtifact, setOpenArtifact] = useState<{ name: string; content: string } | null>(null);
@@ -867,6 +868,16 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                                   {a.name.slice(0, a.name.lastIndexOf('/'))}/
                                 </div>
                               )}
+                              {/* O agente salvou fora da pasta da tarefa.
+                                  Mostrar é melhor que simplesmente não achar. */}
+                              {a.outside_task && (
+                                <span
+                                  title="Salvo fora da pasta desta tarefa — o agente navegou durante o trabalho"
+                                  className="inline-block mt-1 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/25"
+                                >
+                                  fora da tarefa
+                                </span>
+                              )}
                               {a.preview && (
                                 <div className="text-[10.5px] text-[#8fa0b8] mt-1 line-clamp-2 leading-snug">
                                   {a.preview}
@@ -1164,3 +1175,4 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     </section>
   );
 };
+

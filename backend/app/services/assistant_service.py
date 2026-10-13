@@ -120,6 +120,12 @@ class AssistantService:
         cli_preference: Optional[str] = None,
         worktree_path: Optional[str] = None
     ) -> str:
+        # O agente navega durante o trabalho (entra na pasta do docker, por
+        # exemplo) e passa a salvar lá. Lembrar a cada mensagem é barato.
+        if worktree_path:
+            from app.services.artifact_service import artifact_service
+            user_message = f"{user_message}\n{artifact_service.instrucao_de_local(worktree_path)}"
+
         effective_message = user_message
         if attachments:
             att_info = "\n\n[Anexos fornecidos pelo usuário:]"

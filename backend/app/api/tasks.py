@@ -483,12 +483,17 @@ def list_task_artifacts(task_id: str, db: Session = Depends(get_db)):
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
-    base = task.worktree_path if (task.worktree_path and os.path.isdir(task.worktree_path)) \
-        else (task.project.root_path if task.project else None)
-    if not base:
+    raiz = task.project.root_path if task.project else None
+    wt = task.worktree_path if (task.worktree_path and os.path.isdir(task.worktree_path)) else None
+    if not raiz and not wt:
         return {"base": None, "artifacts": []}
 
-    return {"base": base, "artifacts": artifact_service.listar(base)}
+    # Procura além da pasta da tarefa: o agente navega durante o trabalho e
+    # nem sempre salva onde devia. O que vier de fora é marcado.
+    return {
+        "base": wt or raiz,
+        "artifacts": artifact_service.listar_amplo(wt, raiz or wt),
+    }
 
 
 @router.get("/{task_id}/artifacts/{nome}")
@@ -828,6 +833,10 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
 
     # Convida o agente a registrar o que aprendeu — com o padrão em "nada".
     prompt = f"{prompt}\n\n---\n{artifact_service.instrucao_de_conhecimento()}"
+    # E diz onde ele deve salvar o que produzir, já que ele navega.
+    prompt += artifact_service.instrucao_de_local(
+        git_service.get_worktree_path(task.project.root_path, task.id)
+    )
 
     is_assistant = (
         task.runner_type == RunnerType.DIRECT_API

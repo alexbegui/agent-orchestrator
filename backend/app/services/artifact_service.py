@@ -61,6 +61,9 @@ EXTENSOES_DE_ARTEFATO = set(CATEGORIAS_POR_EXT) | {".mmd"}
 IGNORAR = (
     ".run/",           # metadados de execução do orquestrador
     "_proposto.md",    # rascunho de conhecimento, ainda não aprovado
+    # Varrendo a raiz do projeto, o .worktrees/ traria o trabalho de outras
+    # tarefas junto. Cada worktree é visitada separadamente quando for o caso.
+    ".worktrees/",
     "node_modules/",
     ".git/",
     "venv/",
@@ -133,6 +136,72 @@ class ArtifactService:
                 "path": caminho,
             })
         return itens
+
+    def instrucao_de_local(self, worktree_path: Optional[str]) -> str:
+        """
+        Diz ao agente onde ele deve salvar.
+
+        Ele navega durante o trabalho — pedem para subir o docker e ele vai
+        para a pasta do compose, e passa a salvar lá. Não garante obediência,
+        mas resolve a maioria dos casos por ~50 tokens.
+        """
+        if not worktree_path:
+            return ""
+        return (
+            f"\n## Pasta desta tarefa\n"
+            f"`{worktree_path}`\n"
+            "Salve documentos, mockups e análises nesta pasta, mesmo que você "
+            "precise navegar para outro lugar durante o trabalho.\n"
+        )
+
+    def listar_amplo(self, worktree_path: Optional[str], project_root: str) -> List[Dict[str, Any]]:
+        """
+        Procura além da pasta da tarefa — porque o agente nem sempre obedece.
+
+        Marca `outside_task` no que veio de fora, para o usuário ver que o
+        arquivo saiu do lugar em vez de simplesmente não encontrá-lo.
+        Worktrees de OUTRAS tarefas ficam de fora: aquilo é trabalho alheio.
+        """
+        itens: List[Dict[str, Any]] = []
+        vistos = set()
+
+        for item in self.listar(worktree_path) if worktree_path else []:
+            item["outside_task"] = False
+            vistos.add(item["name"])
+            itens.append(item)
+
+        for base in self._outros_lugares(worktree_path, project_root):
+            for item in self.listar(base):
+                prefixo = os.path.relpath(base, project_root).replace("\\", "/")
+                nome = f"{prefixo}/{item['name']}" if prefixo != "." else item["name"]
+                if nome in vistos:
+                    continue
+                vistos.add(nome)
+                item["name"] = nome
+                item["outside_task"] = True
+                itens.append(item)
+
+        return itens
+
+    def _outros_lugares(self, worktree_path: Optional[str], project_root: str) -> List[str]:
+        """A raiz do projeto e worktrees que não pertencem a tarefas."""
+        if not project_root or not os.path.isdir(project_root):
+            return []
+
+        lugares = [project_root]
+        pasta_wt = os.path.join(project_root, ".worktrees")
+        if os.path.isdir(pasta_wt):
+            for nome in sorted(os.listdir(pasta_wt)):
+                caminho = os.path.join(pasta_wt, nome)
+                if not os.path.isdir(caminho):
+                    continue
+                # Worktree de outra tarefa é trabalho de outra tarefa.
+                if nome.startswith("task-"):
+                    continue
+                lugares.append(caminho)
+
+        atual = os.path.abspath(worktree_path) if worktree_path else None
+        return [l for l in lugares if os.path.abspath(l) != atual]
 
     def _e_documento(self, rel: str) -> bool:
         """Artefato é documento. Código é o que a aba Diffs mostra."""
