@@ -22,6 +22,7 @@ from app.services.run_registry import run_registry
 from app.services.artifact_service import artifact_service
 from app.services.skills_service import skills_service
 from app.services.queue_service import queue_service
+from app.services.jev_service import jev_service, TriageResult, GuardrailResult
 from app.websockets.manager import ws_manager
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -733,6 +734,38 @@ def refine_task(task_id: str, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(task)
     return task
+
+
+@router.post("/{task_id}/triage", response_model=TriageResult)
+def triage_task(task_id: str, db: Session = Depends(get_db)):
+    """Avalia o prompt via JEV (System 1), sugerindo tipo, complexidade e modelo ideal."""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    res = jev_service.triage(task.raw_prompt)
+    cfg = dict(task.runner_config or {})
+    if not cfg.get("model"):
+        cfg["model"] = res.recommended_model
+        cfg["jev_triage"] = res.model_dump()
+        task.runner_config = cfg
+        db.commit()
+
+    return res
+
+
+@router.post("/{task_id}/verify-diff", response_model=GuardrailResult)
+def verify_task_diff(task_id: str, db: Session = Depends(get_db)):
+    """Avalia o diff da tarefa contra os guardrails de conformidade via JEV."""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    diff = ""
+    if task.worktree_path and task.project:
+        diff = git_service.get_diff(task.project.root_path, task.id)
+
+    return jev_service.verify_diff(diff)
 
 
 async def _run_task_background(task_id: str, project_path: str, command: list[str], db_session_factory, is_assistant: bool = False, prompt: str = ""):
