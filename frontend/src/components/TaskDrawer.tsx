@@ -49,6 +49,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
       modified_at: number;
       path: string;
       outside_task?: boolean;
+      rel_path?: string | null;
     }[]
   >([]);
   const [openArtifact, setOpenArtifact] = useState<{ name: string; content: string } | null>(null);
@@ -850,7 +851,11 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
                     {doGrupo.map((a) => {
                       const aberto = openArtifact?.name === a.name;
-                      const url = api.artifactUrl(task.id, a.name);
+                      // `name` é o rótulo curto; `rel_path` é o endereço real,
+                      // a partir da raiz do projeto. Ler pelo nome achava o
+                      // arquivo só quando ele estava na pasta da tarefa.
+                      const chave = a.rel_path || a.name;
+                      const url = api.artifactUrl(task.id, chave);
                       const textual = a.kind === 'markdown' || a.kind === 'mermaid';
                       const visualizavel = textual || a.category === 'imagem' || a.category === 'mockup';
                       return (
@@ -894,7 +899,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                                     if (aberto) return setOpenArtifact(null);
                                     if (textual) {
                                       try {
-                                        setOpenArtifact(await api.readTaskArtifact(task.id, a.name));
+                                        const lido = await api.readTaskArtifact(task.id, chave);
+                                        setOpenArtifact({ name: a.name, content: lido.content });
                                       } catch (err: any) {
                                         alert(`⚠️ ${err.message || 'Falha ao ler o artefato'}`);
                                       }

@@ -161,12 +161,20 @@ class ArtifactService:
         Marca `outside_task` no que veio de fora, para o usuário ver que o
         arquivo saiu do lugar em vez de simplesmente não encontrá-lo.
         Worktrees de OUTRAS tarefas ficam de fora: aquilo é trabalho alheio.
+
+        Cada item leva `rel_path`, o caminho a partir da RAIZ DO PROJETO — e é
+        por ele que a leitura acha o arquivo. Antes `name` era a única pista, e
+        ele é relativo a bases diferentes conforme o item veio de dentro ou de
+        fora da tarefa: a lista falava de um lugar e a leitura procurava em
+        outro, então artefato de fora aparecia e devolvia 404 ao abrir.
+        `name` continua curto, que é o que o usuário lê na tela.
         """
         itens: List[Dict[str, Any]] = []
         vistos = set()
 
         for item in self.listar(worktree_path) if worktree_path else []:
             item["outside_task"] = False
+            item["rel_path"] = self._chave(item["path"], project_root)
             vistos.add(item["name"])
             itens.append(item)
 
@@ -179,9 +187,27 @@ class ArtifactService:
                 vistos.add(nome)
                 item["name"] = nome
                 item["outside_task"] = True
+                item["rel_path"] = self._chave(item["path"], project_root)
                 itens.append(item)
 
         return itens
+
+    @staticmethod
+    def _chave(caminho_absoluto: str, project_root: str) -> Optional[str]:
+        """
+        Onde o arquivo está a partir da raiz do projeto.
+
+        A raiz é ancestral de tudo que varremos: o worktree da tarefa fica em
+        `<projeto>/.worktrees/task-<id>` e as outras worktrees ao lado dele.
+        Se um dia não for (worktree fora do projeto, caminho em outro disco),
+        devolve None em vez de um `../..` que a guarda de caminho recusaria.
+        """
+        try:
+            rel = os.path.relpath(caminho_absoluto, project_root)
+        except ValueError:
+            return None
+        rel = rel.replace("\\", "/")
+        return None if rel.startswith("../") or rel == ".." else rel
 
     def _outros_lugares(self, worktree_path: Optional[str], project_root: str) -> List[str]:
         """A raiz do projeto e worktrees que não pertencem a tarefas."""

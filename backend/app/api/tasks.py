@@ -491,20 +491,67 @@ def list_task_artifacts(task_id: str, db: Session = Depends(get_db)):
 
     # Procura além da pasta da tarefa: o agente navega durante o trabalho e
     # nem sempre salva onde devia. O que vier de fora é marcado.
+    #
+    # `base` é a raiz do projeto para TODOS os itens, inclusive os do worktree
+    # (que fica em `<projeto>/.worktrees/task-<id>`). É a mesma base que a
+    # leitura usa — declarar uma e ler de outra era o que dava 404.
     return {
-        "base": wt or raiz,
+        "base": raiz or wt,
         "artifacts": artifact_service.listar_amplo(wt, raiz or wt),
     }
 
 
-@router.get("/{task_id}/artifacts/{nome}")
+def _base_dos_artefatos(task: Task) -> Optional[str]:
+    """
+    A raiz do projeto, que é ancestral do worktree e das outras worktrees.
+
+    Uma base só para listar e ler: `rel_path` é sempre relativo a ela. Sem
+    projeto (não deve acontecer), cai no worktree para não perder o acesso.
+    """
+    raiz = task.project.root_path if task.project else None
+    if raiz and os.path.isdir(raiz):
+        return raiz
+    return task.worktree_path if (task.worktree_path and os.path.isdir(task.worktree_path)) else None
+
+
+# `{nome:path}` porque o artefato mora em subpasta: `docs/mapa.md`, e os de
+# fora da tarefa em `.worktrees/outra/docs/mapa.md`. Sem o conversor o próprio
+# roteador recusava a URL ("Not Found") e a requisição nem chegava aqui.
+# O conversor é guloso, então esta rota precisa vir ANTES da sem `/raw`.
+@router.get("/{task_id}/artifacts/{nome:path}/raw")
+def serve_task_artifact(task_id: str, nome: str, db: Session = Depends(get_db)):
+    """
+    Serve o artefato pelo próprio servidor.
+
+    O navegador bloqueia links `file://` vindos de uma página http — por isso
+    não dava para abrir um mockup ou um mapa mental sem ir na pasta à mão.
+    Servindo daqui, com o content-type certo, ele abre normalmente.
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    base = _base_dos_artefatos(task)
+    if not base:
+        raise HTTPException(status_code=404, detail="Artefato não encontrado")
+
+    try:
+        dados = artifact_service.ler_bytes(base, nome)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if dados is None:
+        raise HTTPException(status_code=404, detail="Artefato não encontrado")
+
+    return Response(content=dados, media_type=artifact_service.content_type(nome))
+
+
+@router.get("/{task_id}/artifacts/{nome:path}")
 def read_task_artifact(task_id: str, nome: str, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
-    base = task.worktree_path if (task.worktree_path and os.path.isdir(task.worktree_path)) \
-        else (task.project.root_path if task.project else None)
+    base = _base_dos_artefatos(task)
     if not base:
         raise HTTPException(status_code=404, detail="Artefato não encontrado")
 
@@ -551,34 +598,6 @@ def approve_knowledge_proposals(
         artifact_service.limpar_propostas(task.worktree_path)
 
     return {"registered": len(data.lines)}
-
-
-@router.get("/{task_id}/artifacts/{nome}/raw")
-def serve_task_artifact(task_id: str, nome: str, db: Session = Depends(get_db)):
-    """
-    Serve o artefato pelo próprio servidor.
-
-    O navegador bloqueia links `file://` vindos de uma página http — por isso
-    não dava para abrir um mockup ou um mapa mental sem ir na pasta à mão.
-    Servindo daqui, com o content-type certo, ele abre normalmente.
-    """
-    task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
-
-    base = task.worktree_path if (task.worktree_path and os.path.isdir(task.worktree_path)) \
-        else (task.project.root_path if task.project else None)
-    if not base:
-        raise HTTPException(status_code=404, detail="Artefato não encontrado")
-
-    try:
-        dados = artifact_service.ler_bytes(base, nome)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    if dados is None:
-        raise HTTPException(status_code=404, detail="Artefato não encontrado")
-
-    return Response(content=dados, media_type=artifact_service.content_type(nome))
 
 
 @router.post("/{task_id}/terminal")
