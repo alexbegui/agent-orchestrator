@@ -21,6 +21,7 @@ from app.services.terminal_service import terminal_service
 from app.services.run_registry import run_registry
 from app.services.artifact_service import artifact_service
 from app.services.skills_service import skills_service
+from app.services.queue_service import queue_service
 from app.websockets.manager import ws_manager
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -813,6 +814,7 @@ async def _run_task_background(task_id: str, project_path: str, command: list[st
             "task_id": task_id,
             "status": final_status.value
         })
+        asyncio.create_task(_despachar_proxima_da_fila(db_session_factory))
 
     except Exception as e:
         await ws_manager.broadcast_task(task_id, {
@@ -827,6 +829,71 @@ async def _run_task_background(task_id: str, project_path: str, command: list[st
         db.close()
         await ws_manager.broadcast_task(task_id, {"type": "STATUS", "status": "FAILED"})
         await ws_manager.broadcast_dashboard({"type": "TASK_UPDATED", "task_id": task_id, "status": "FAILED"})
+        asyncio.create_task(_despachar_proxima_da_fila(db_session_factory))
+
+
+async def _despachar_proxima_da_fila(db_session_factory):
+    """Busca a próxima tarefa em QUEUED e a despacha caso haja vagas no pool."""
+    db = db_session_factory()
+    try:
+        if not queue_service.can_run_now(db):
+            return
+        proxima = queue_service.get_next_queued(db)
+        if not proxima or not proxima.project:
+            return
+
+        prompt = proxima.refined_spec or proxima.raw_prompt
+        skills_list = skills_service.list_skills(proxima.project.root_path)
+        if skills_list:
+            prompt = f"{skills_service.format_summary(skills_list)}\n\n---\n\n{prompt}"
+        contexto = artifact_service.contexto_para_prompt(proxima.project.root_path)
+        if contexto:
+            prompt = f"{contexto}\n---\n\n{prompt}"
+        prompt = f"{prompt}\n\n---\n{artifact_service.instrucao_de_conhecimento()}"
+        prompt += artifact_service.instrucao_de_local(
+            git_service.get_worktree_path(proxima.project.root_path, proxima.id)
+        )
+
+        is_assistant = (
+            proxima.runner_type == RunnerType.DIRECT_API
+            or (proxima.runner_config and proxima.runner_config.get("cli") in ["assistant", "integrated"])
+        )
+        cmd = []
+        if not is_assistant:
+            cfg = dict(proxima.runner_config or {})
+            if "claude" in str(cfg.get("cli", "")).lower() and not cfg.get("claude_session_id"):
+                cfg["claude_session_id"] = str(uuid.uuid4())
+                proxima.runner_config = cfg
+            if any(k in str(cfg.get("cli", "")).lower() for k in ["agy", "gemini", "antigravity"]) and not cfg.get("antigravity_conversation_id"):
+                cfg["antigravity_conversation_id"] = str(uuid.uuid4())
+                proxima.runner_config = cfg
+            cmd = runner_service.resolve_cli_command(proxima.runner_type.value, prompt, cfg)
+
+        proxima.status = TaskStatus.RUNNING
+        proxima.worktree_path = git_service.get_worktree_path(proxima.project.root_path, proxima.id)
+        proxima.git_branch = f"task/{proxima.id}"
+        db.commit()
+
+        asyncio.create_task(
+            _run_task_background(
+                proxima.id,
+                proxima.project.root_path,
+                cmd,
+                db_session_factory,
+                is_assistant,
+                prompt
+            )
+        )
+        await ws_manager.broadcast_dashboard({
+            "type": "TASK_UPDATED",
+            "task_id": proxima.id,
+            "project_id": proxima.project_id,
+            "status": "RUNNING"
+        })
+    except Exception as e:
+        logger.error(f"Erro ao despachar tarefa da fila: {e}")
+    finally:
+        db.close()
 
 
 @router.post("/{task_id}/run", response_model=TaskResponse)
@@ -834,6 +901,20 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    # Se o pool de concorrência estiver cheio, enfileira a tarefa (QUEUED)
+    if not queue_service.can_run_now(db):
+        queue_service.enqueue(task, db)
+        background_tasks.add_task(
+            ws_manager.broadcast_dashboard,
+            {
+                "type": "TASK_UPDATED",
+                "task_id": task.id,
+                "project_id": task.project_id,
+                "status": "QUEUED"
+            }
+        )
+        return task
 
     prompt = task.refined_spec or task.raw_prompt
 
