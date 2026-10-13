@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     # Baixe para "acceptEdits" se quiser um padrão mais conservador.
     CLAUDE_PERMISSION_MODE: str = "bypassPermissions"
 
+    # Modo JEV (System 1 Decision Engine via TypeSafe AI)
+    JEV_API_KEY: Optional[str] = None
+    JEV_ENDPOINT: str = "https://api.typesafe.ai/v1/systemone"
+    JEV_MODEL: str = "jev-latest"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

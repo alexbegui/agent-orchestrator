@@ -102,3 +102,48 @@ def test_api_triage_e_verify_diff(tmp_path):
     finally:
         app.dependency_overrides.clear()
 
+
+def test_remote_triage_mock(monkeypatch):
+    from unittest.mock import MagicMock
+    import httpx
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "model": "jev-1.13.0",
+        "answers": {
+            "task_type": {"choice": "REFACTOR", "confidence": 0.98},
+            "is_complex": {"noul": 0.91},
+            "complexity_level": {"score": 1.95}
+        }
+    }
+
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value.post.return_value = mock_resp
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: mock_client)
+
+    jev = JevService(api_key="ts_test_key")
+    res = jev.triage("Reescrever sistema inteiro")
+    assert res.task_type == "REFACTOR"
+    assert res.recommended_model == "pro"
+    assert "Jev System 1" in res.reasoning
+
+
+def test_remote_triage_fallback_em_erro(monkeypatch):
+    from unittest.mock import MagicMock
+    import httpx
+
+    def mock_post(*args, **kwargs):
+        raise httpx.ConnectError("Erro de conexao simulado")
+
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value.post.side_effect = mock_post
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: mock_client)
+
+    jev = JevService(api_key="ts_test_key")
+    # Deve acionar o fallback heurístico sem levantar exceção
+    res = jev.triage("onde fica o arquivo .env?")
+    assert res.task_type == "EXPLORATION"
+    assert res.recommended_model == "flash"
+
+
