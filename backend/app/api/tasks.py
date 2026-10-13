@@ -15,8 +15,8 @@ from app.models.task import Task, TaskStatus, RunnerType
 from app.models.message import Message, MessageRole
 from app.services.git_service import GitWorktreeService
 from app.services.runner_service import RunnerService
-from app.services.refiner_service import PromptRefinerService
-from app.services.assistant_service import assistant_service
+from app.services.refiner_service import PromptRefinerService, RespostaInvalida
+from app.services.assistant_service import assistant_service, MotorIndisponivel
 from app.services.terminal_service import terminal_service
 from app.services.run_registry import run_registry
 from app.services.artifact_service import artifact_service
@@ -718,22 +718,45 @@ def create_task(data: TaskCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/{task_id}/refine", response_model=TaskResponse)
-def refine_task(task_id: str, db: Session = Depends(get_db)):
+async def refine_task(task_id: str, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
-    # Mapeia arquivos existentes no projeto para context pruning
-    available_files = []
-    if os.path.exists(task.project.root_path):
-        for root, _, files in os.walk(task.project.root_path):
-            if ".git" in root or "node_modules" in root or ".worktrees" in root:
-                continue
-            for f in files:
-                rel = os.path.relpath(os.path.join(root, f), task.project.root_path)
-                available_files.append(rel.replace("\\", "/"))
+    raiz = task.project.root_path
 
-    spec = refiner_service.refine(task.raw_prompt, available_files=available_files)
+    # A árvore vem do git, não de os.walk. O walk antigo só pulava .git,
+    # node_modules e .worktrees: neste repositório devolvia 4.077 arquivos
+    # (~72 mil tokens), 3.786 deles dentro da venv. `git ls-files` devolve 99.
+    arvore = git_service.listar_versionados(raiz)
+    if not arvore:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Não foi possível listar os arquivos do projeto. Confirme que "
+                f"'{raiz}' existe e é um repositório git."
+            ),
+        )
+
+    def ler(rel: str) -> str:
+        caminho = os.path.join(raiz, rel.replace("/", os.sep))
+        with open(caminho, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+
+    try:
+        spec = await refiner_service.refinar(
+            task.raw_prompt,
+            arvore=arvore,
+            ler=ler,
+            recentes=git_service.arquivos_recentes(raiz),
+            conhecimento=artifact_service.contexto_para_prompt(raiz),
+        )
+    except (MotorIndisponivel, RespostaInvalida) as e:
+        # A tarefa NÃO avança. Antes a rota não tinha como falhar (o regex
+        # sempre produzia algo), e marcar SPEC_READY aqui faria o usuário
+        # aprovar uma spec que não veio da IA sem saber disso.
+        raise HTTPException(status_code=502, detail=str(e))
+
     task.refined_spec = refiner_service.to_markdown(spec)
     task.status = TaskStatus.SPEC_READY
     db.commit()
@@ -765,14 +788,19 @@ async def _run_task_background(task_id: str, project_path: str, command: list[st
             title = t_obj.title if t_obj else "Tarefa"
             db_tmp.close()
 
-            await assistant_service.execute_task_direct(
+            entregou = await assistant_service.execute_task_direct(
                 task_id=task_id,
                 task_title=title,
                 prompt=prompt,
                 worktree_path=worktree_path,
                 log_callback=log_cb
             )
-            final_status = TaskStatus.REVIEW_READY
+            # O retorno É a resposta. Antes ele era descartado e a tarefa virava
+            # REVIEW_READY sempre — então "💬 Só conversar", que não escreve
+            # código e devolve False, terminava com o card em "Entregou ·
+            # revisar" e um diff vazio. Mesmo critério do caminho de CLI logo
+            # abaixo, onde entrega é `rc == 0`.
+            final_status = TaskStatus.REVIEW_READY if entregou else TaskStatus.FAILED
         else:
             # Desacoplado: o agente sobrevive a reinícios do servidor e só para
             # quando o usuário mandar (ver artefato agentes-sobrevivem-ao-servidor).
@@ -872,6 +900,15 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
             cfg["claude_session_id"] = str(uuid.uuid4())
             task.runner_config = cfg
         cmd = runner_service.resolve_cli_command(task.runner_type.value, prompt, cfg)
+
+        # A sessão passa a existir no momento em que o claude é disparado. Sem
+        # registrar isso, o ▶ Rodar seguinte mandaria --session-id com o mesmo
+        # id e o CLI recusaria ("Session ID ... is already in use"), matando a
+        # tarefa em menos de um segundo. Marcamos pelo comando de fato montado,
+        # não pela configuração, para não mentir quando não houve sessão.
+        if "--session-id" in cmd and not cfg.get("claude_session_started"):
+            cfg["claude_session_started"] = True
+            task.runner_config = dict(cfg)
 
     task.status = TaskStatus.RUNNING
     task.worktree_path = git_service.get_worktree_path(task.project.root_path, task.id)

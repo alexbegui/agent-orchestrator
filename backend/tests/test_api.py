@@ -27,7 +27,7 @@ def client(tmp_path):
     app.dependency_overrides.clear()
 
 
-def test_api_create_project_and_task(client, tmp_path):
+def test_api_create_project_and_task(client, tmp_path, monkeypatch):
     # 1. Create project
     proj_dir = tmp_path / "fake-project"
     proj_dir.mkdir()
@@ -60,6 +60,25 @@ def test_api_create_project_and_task(client, tmp_path):
     assert task_data["status"] == "DRAFT"
 
     # 4. Refine task prompt
+    # O refino passou a ser uma chamada de IA, então este teste de ciclo de vida
+    # injeta a spec em vez de bater na rede. O comportamento do refino em si
+    # (sucesso, IA fora do ar, resposta inválida) está em test_refino_rota.py.
+    from app.api import tasks as rotas_tarefas
+    from app.services.refiner_service import RefinedSpec
+
+    async def refinar_falso(*args, **kwargs):
+        return RefinedSpec(
+            objective="Implementar autenticação por token",
+            target_files=["app.py"],
+            steps=["Escrever o teste do login"],
+            acceptance_criteria=["Login com senha correta devolve token"],
+        )
+
+    monkeypatch.setattr(rotas_tarefas.refiner_service, "refinar", refinar_falso)
+    monkeypatch.setattr(
+        rotas_tarefas.git_service, "listar_versionados", lambda _raiz: ["app.py"]
+    )
+
     resp = client.post(f"/api/tasks/{task_id}/refine")
     assert resp.status_code == 200
     refined_data = resp.json()

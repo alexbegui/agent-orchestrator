@@ -12,6 +12,76 @@ from app.models.message import Message, MessageRole
 
 logger = logging.getLogger("orchestrator.assistant")
 
+# Teto para uma resposta do CLI no chat. Sem ele, `communicate()` esperava para
+# sempre: um CLI que não retorna deixava a marca `chat_busy_since` presa, e o
+# usuário ficava até 15 minutos (CHAT_BUSY_TIMEOUT) sem conseguir perguntar
+# nada — o sintoma "fica só processando". Estourado o teto, o processo é morto
+# e a cascata tenta o próximo motor, em vez de o chat emudecer.
+CHAT_CLI_TIMEOUT = 600.0
+
+# Refino é uma chamada curta que precisa voltar JSON. Não é conversa: se não
+# respondeu em 2 minutos, respondeu errado.
+REFINO_TIMEOUT = 120.0
+
+
+# Abaixo do mínimo do modelo a marca de cache não cacheia nada e NÃO dá erro —
+# fica `cache_creation_input_tokens: 0` em silêncio. No Opus 5.5 o mínimo é 512
+# tokens; a ~4 caracteres por token, 2048 caracteres. Marcamos com folga para
+# não gastar escrita de cache (1,25x) num prefixo que nunca vai ser lido.
+MIN_CHARS_PARA_CACHE = 2400
+
+
+def montar_blocos_cacheaveis(prefixo: str, pedido: str) -> List[Dict[str, Any]]:
+    """
+    Separa o prompt em "o que não muda" e "o que muda", nessa ordem.
+
+    Caching é casamento de PREFIXO: um byte diferente no começo invalida tudo
+    depois. Então a economia não vem de ligar uma opção, vem da ordem — o que
+    repete entre refinos do mesmo projeto (instruções, conhecimento, árvore de
+    arquivos) vem primeiro e leva a marca; o pedido do usuário, que muda a cada
+    tarefa, vem depois e fica de fora.
+
+    A ordem inversa não dá erro nenhum: só nunca acerta o cache.
+    """
+    if not prefixo:
+        return [{"type": "text", "text": pedido}]
+
+    bloco = {"type": "text", "text": prefixo}
+    if len(prefixo) >= MIN_CHARS_PARA_CACHE:
+        bloco["cache_control"] = {"type": "ephemeral"}
+    return [bloco, {"type": "text", "text": pedido}]
+
+
+class MotorIndisponivel(Exception):
+    """
+    Nenhum motor de IA real respondeu.
+
+    Existe para que a falha seja alta e visível. A versão antiga do refino era
+    regex e nunca falhava — sempre saía uma spec, de aparência igual à de uma
+    spec de verdade. Aprovar aquilo achando que veio da IA é pior que ficar
+    sem spec, então aqui a ausência de motor é erro, nunca um fallback.
+    """
+
+
+async def _comunicar_com_teto(proc, rotulo: str):
+    """
+    Espera a saída do processo, mas desiste no teto e mata a árvore.
+
+    Devolve (stdout, stderr) ou None quando estourou — quem chama trata o None
+    como "este motor não respondeu" e cai para o próximo.
+    """
+    try:
+        return await asyncio.wait_for(proc.communicate(), timeout=CHAT_CLI_TIMEOUT)
+    except asyncio.TimeoutError:
+        logger.error(
+            f"{rotulo} não respondeu em {CHAT_CLI_TIMEOUT}s; encerrando o processo"
+        )
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return None
+
 
 class AssistantService:
     """
@@ -63,23 +133,29 @@ class AssistantService:
         cwd = worktree_path if (worktree_path and os.path.isdir(worktree_path)) else project_root
         conv_id = conversation_id or (self._task_conversations.get(task_id) if task_id else None)
 
-        cmd = [agy_cmd, "-p", "--dangerously-skip-permissions"]
+        # O agy lê o argumento seguinte a -p como o prompt; com a flag ali, ele
+        # respondia à flag e descartava a pergunta. O prompt vai anexado.
         if conv_id:
-            cmd += ["--conversation", conv_id, user_message]
+            cmd = [agy_cmd, f"-p={user_message}", "--dangerously-skip-permissions",
+                   "--conversation", conv_id]
         else:
-            cmd.append(
+            abertura = (
                 f"Você é o Engenheiro de Software Sênior do Agent Orchestrator "
                 f"trabalhando no projeto '{project_name}'. "
                 f"Tarefa: '{task_title}'. Requisito: '{task_prompt}'.\n\n"
                 f"Mensagem do usuário: {user_message}"
             )
+            cmd = [agy_cmd, f"-p={abertura}", "--dangerously-skip-permissions"]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await proc.communicate()
+        resultado = await _comunicar_com_teto(proc, "agy")
+        if resultado is None:
+            return None
+        stdout, stderr = resultado
 
         if proc.returncode != 0:
             logger.error(
@@ -104,6 +180,139 @@ class AssistantService:
     def _get_http_client(self) -> httpx.AsyncClient:
         proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
         return httpx.AsyncClient(proxy=proxy, timeout=60.0)
+
+    async def completar_json(self, prompt: str, prefixo: str = "", max_tokens: int = 4000) -> str:
+        """
+        Uma chamada curta de API direta que devolve texto (esperado: JSON).
+
+        Usa API direta — não os CLIs — de propósito: o refino precisa de
+        resposta estruturada em segundos, e CLI responde em prosa e demora.
+        Anthropic primeiro, Gemini como segunda opção.
+
+        `prefixo` é a parte estável do prompt (instruções, conhecimento do
+        projeto, árvore de arquivos) e vai antes, marcada para cache; `prompt`
+        é a parte que muda a cada tarefa. Ver `montar_blocos_cacheaveis`.
+
+        NÃO cai para o motor local embutido: ele não lê o projeto nem escreve
+        código, e a spec que ele produziria seria genérica — exatamente o
+        defeito do regex que este caminho veio substituir. Sem motor real,
+        levanta MotorIndisponivel e a tarefa não avança.
+        """
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY") or getattr(settings, "ANTHROPIC_API_KEY", None)
+        gemini_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None)
+
+        if not anthropic_key and not gemini_key:
+            raise MotorIndisponivel(
+                "Nenhuma chave de API configurada. Informe ANTHROPIC_API_KEY ou "
+                "GEMINI_API_KEY em Ajustes para lapidar o prompt."
+            )
+
+        falhas: List[str] = []
+
+        if anthropic_key:
+            try:
+                return await self._json_anthropic(anthropic_key, prompt, prefixo, max_tokens)
+            except Exception as e:
+                logger.error(f"Refino via Anthropic falhou: {e}")
+                falhas.append(f"Anthropic: {self._motivo(e)}")
+
+        if gemini_key:
+            try:
+                # O Gemini não tem equivalente a cache_control explícito; o
+                # prefixo entra como texto normal, na mesma ordem.
+                return await self._json_gemini(gemini_key, f"{prefixo}\n\n{prompt}".strip(), max_tokens)
+            except Exception as e:
+                logger.error(f"Refino via Gemini falhou: {e}")
+                falhas.append(f"Gemini: {self._motivo(e)}")
+
+        raise MotorIndisponivel("Nenhum motor respondeu — " + "; ".join(falhas))
+
+    @staticmethod
+    def _motivo(e: Exception) -> str:
+        """
+        O motivo que chega na tela. Precisa carregar o status HTTP: "401" diz
+        ao usuário que a chave está errada; "falhou" o manda adivinhar.
+        """
+        resp = getattr(e, "response", None)
+        if resp is not None and getattr(resp, "status_code", None):
+            return f"HTTP {resp.status_code} — {str(e)[:200]}"
+        return str(e)[:200] or e.__class__.__name__
+
+    async def _json_anthropic(
+        self, api_key: str, prompt: str, prefixo: str, max_tokens: int
+    ) -> str:
+        payload = {
+            "model": "claude-opus-5-5",
+            "max_tokens": max_tokens,
+            "system": (
+                "Você responde EXCLUSIVAMENTE com um objeto JSON válido, sem "
+                "cercas de código e sem texto antes ou depois."
+            ),
+            "messages": [
+                {"role": "user", "content": montar_blocos_cacheaveis(prefixo, prompt)}
+            ],
+        }
+        async with httpx.AsyncClient(
+            proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY"),
+            timeout=REFINO_TIMEOUT,
+        ) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                json=payload,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        # Cache que não acerta falha em SILÊNCIO — não há erro, só
+        # `cache_read_input_tokens: 0` para sempre. Sem registrar isso, não há
+        # como distinguir "está economizando" de "a ordem do prompt quebrou o
+        # prefixo". Este log é a única evidência de que o caching funciona.
+        uso = data.get("usage", {})
+        logger.info(
+            "Refino via Anthropic — tokens: %s novos, %s escritos no cache, %s lidos do cache",
+            uso.get("input_tokens", "?"),
+            uso.get("cache_creation_input_tokens", "?"),
+            uso.get("cache_read_input_tokens", "?"),
+        )
+
+        # A resposta pode trazer blocos de raciocínio antes do texto; só o
+        # bloco de texto interessa.
+        for bloco in data.get("content", []):
+            if bloco.get("type") == "text" and bloco.get("text", "").strip():
+                return bloco["text"].strip()
+        raise MotorIndisponivel("A Anthropic respondeu sem conteúdo de texto.")
+
+    async def _json_gemini(self, api_key: str, prompt: str, max_tokens: int) -> str:
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-2.0-flash:generateContent?key={api_key}"
+        )
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": max_tokens,
+                # Pedir JSON ao modelo em vez de torcer para ele obedecer o texto.
+                "responseMimeType": "application/json",
+            },
+        }
+        async with httpx.AsyncClient(
+            proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY"),
+            timeout=REFINO_TIMEOUT,
+        ) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        for cand in data.get("candidates", []):
+            for parte in cand.get("content", {}).get("parts", []):
+                if parte.get("text", "").strip():
+                    return parte["text"].strip()
+        raise MotorIndisponivel("O Gemini respondeu sem conteúdo de texto.")
 
     async def generate_chat_reply(
         self,
@@ -269,7 +478,10 @@ class AssistantService:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await proc.communicate()
+        resultado = await _comunicar_com_teto(proc, "Claude CLI")
+        if resultado is None:
+            return None
+        stdout, stderr = resultado
 
         if proc.returncode != 0:
             logger.error(

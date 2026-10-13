@@ -21,6 +21,58 @@ class GitWorktreeService:
             check=True
         )
 
+    def listar_versionados(self, project_path: str) -> list[str]:
+        """
+        Os arquivos que o git considera do projeto — a árvore que vai para a IA.
+
+        Antes isso era um `os.walk` que só pulava .git, node_modules e
+        .worktrees: neste repositório devolvia 4.077 arquivos (~72 mil tokens),
+        dos quais 3.786 eram a venv do Python. `git ls-files` devolve 99. A
+        lista curada já existe e é o .gitignore do usuário — não há heurística
+        a inventar aqui.
+
+        Pasta sem git devolve lista vazia; quem chama decide o que fazer.
+        """
+        if not project_path or not os.path.isdir(project_path):
+            return []
+        try:
+            res = self._run_git(["ls-files"], cwd=project_path)
+        except (subprocess.CalledProcessError, OSError):
+            return []
+        # O git já devolve com barra normal, mas no Windows um core.quotepath
+        # ou um caminho vindo de outra fonte traz contrabarra. Normaliza porque
+        # o prompt e a IA falam com barra.
+        return [
+            linha.strip().replace("\\", "/")
+            for linha in res.stdout.splitlines()
+            if linha.strip()
+        ]
+
+    def arquivos_recentes(self, project_path: str, commits: int = 50) -> list[str]:
+        """
+        Arquivos tocados nos últimos commits, do mais recente para o mais antigo.
+
+        Serve para o corte da árvore quando ela não cabe: o que o projeto está
+        mexendo tem muito mais chance de ser o alvo da tarefa do que o que não
+        muda há dois anos.
+        """
+        if not project_path or not os.path.isdir(project_path):
+            return []
+        try:
+            res = self._run_git(
+                ["log", f"-{commits}", "--name-only", "--pretty=format:"],
+                cwd=project_path,
+            )
+        except (subprocess.CalledProcessError, OSError):
+            return []
+
+        vistos: list[str] = []
+        for linha in res.stdout.splitlines():
+            caminho = linha.strip().replace("\\", "/")
+            if caminho and caminho not in vistos:
+                vistos.append(caminho)
+        return vistos
+
     def branch_base(self, project_path: str) -> str:
         """
         Descobre o ramo principal do repositório em vez de supor "main".
