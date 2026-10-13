@@ -2,6 +2,7 @@ import os
 import uuid
 import time
 import asyncio
+import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Response
 from sqlalchemy.orm import Session
