@@ -20,6 +20,7 @@ from app.services.assistant_service import assistant_service
 from app.services.terminal_service import terminal_service
 from app.services.run_registry import run_registry
 from app.services.artifact_service import artifact_service
+from app.services.skills_service import skills_service
 from app.websockets.manager import ws_manager
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -665,6 +666,17 @@ def refresh_states(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/skills/available")
+def get_available_skills(project_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """Lista skills descobertas (nome, descrição e caminho) para o projeto ou global."""
+    root_path = None
+    if project_id:
+        p = db.query(Project).filter(Project.id == project_id).first()
+        if p:
+            root_path = p.root_path
+    return skills_service.list_skills(root_path)
+
+
 @router.get("/all", response_model=List[TaskResponse])
 def list_all_tasks(db: Session = Depends(get_db)):
     """Todas as tarefas, de todos os projetos — a visão cross-projeto."""
@@ -825,6 +837,12 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
 
     prompt = task.refined_spec or task.raw_prompt
 
+    # Injeta resumo compacto de skills disponíveis via Progressive Disclosure
+    skills_list = skills_service.list_skills(task.project.root_path)
+    if skills_list:
+        summary_skills = skills_service.format_summary(skills_list)
+        prompt = f"{summary_skills}\n\n---\n\n{prompt}"
+
     # Cola o índice de conhecimento do projeto no começo do prompt. Vale para
     # qualquer CLI — não depende do que cada um lê sozinho. Só o índice entra;
     # os artefatos o agente abre sob demanda.
@@ -851,6 +869,9 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
         # o mesmo agente que fez o trabalho (ver artefato gestao-multi-agente).
         if "claude" in str(cfg.get("cli", "")).lower() and not cfg.get("claude_session_id"):
             cfg["claude_session_id"] = str(uuid.uuid4())
+            task.runner_config = cfg
+        if any(k in str(cfg.get("cli", "")).lower() for k in ["agy", "gemini", "antigravity"]) and not cfg.get("antigravity_conversation_id"):
+            cfg["antigravity_conversation_id"] = str(uuid.uuid4())
             task.runner_config = cfg
         cmd = runner_service.resolve_cli_command(task.runner_type.value, prompt, cfg)
 

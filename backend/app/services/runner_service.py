@@ -68,26 +68,29 @@ class RunnerService:
             args.append(prompt)
             return args
         elif any(k in cli_choice for k in ["agy", "gemini", "antigravity", "agentapi"]):
+            conv_id = cfg.get("antigravity_conversation_id")
+            # Se agentapi foi explicitamente pedido, usamos agentapi
+            if "agentapi" in cli_choice:
+                agentapi = self._agentapi_padrao()
+                if agentapi:
+                    return [agentapi, "new-conversation", "--model=flash", prompt]
+
             # O `agy` é o CLI independente: não exige o IDE aberto nem token CSRF.
             agy = self._agy_padrao()
-            if agy:
-                args = [agy, "-p", "--dangerously-skip-permissions"]
-                conv_id = cfg.get("antigravity_conversation_id")
-                if conv_id:
-                    args += ["--conversation", conv_id]
-                if cfg.get("model"):
-                    args += ["--model", cfg["model"]]
-                args.append(prompt)
-                return args
+            cmd_nome = agy or "agy"
+            # Se não achou agy no disco mas tem agentapi e não foi pedido 'agy' explicitamente
+            if not agy and "agy" not in cli_choice:
+                agentapi = self._agentapi_padrao()
+                if agentapi:
+                    return [agentapi, "new-conversation", "--model=flash", prompt]
 
-            # Fallback legado: o agentapi embutido no IDE, que só funciona com
-            # o Antigravity aberto e com ANTIGRAVITY_LS_ADDRESS/CSRF_TOKEN no ambiente.
-            agentapi = self._agentapi_padrao()
-            if agentapi:
-                return [agentapi, "new-conversation", "--model=flash", prompt]
-
-            # Nada instalado: devolve o nome nu para o execute_command avisar direito.
-            return ["agy", "-p", prompt]
+            args = [cmd_nome, "-p", "--dangerously-skip-permissions"]
+            if conv_id:
+                args += ["--conversation", conv_id]
+            if cfg.get("model"):
+                args += ["--model", cfg["model"]]
+            args.append(prompt)
+            return args
         elif cfg.get("cli_cmd"):
             return [cfg["cli_cmd"], prompt]
         else:
