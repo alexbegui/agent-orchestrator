@@ -17,7 +17,10 @@ def test_claude_recebe_session_id_quando_fornecido():
     )
     assert "--session-id" in cmd
     assert cmd[cmd.index("--session-id") + 1] == "a7f3e1c9-0000-4000-8000-000000000001"
-    assert "migrar a silver" in cmd
+    # O prompt NÃO vai mais no comando: claude.cmd é batch e o cmd.exe
+    # corta na primeira quebra de linha. Ele viaja pela entrada padrão
+    # (ver test_prompt_multilinha_para_claude.py).
+    assert "migrar a silver" not in cmd
 
 
 def test_claude_sem_session_id_continua_funcionando():
@@ -25,7 +28,10 @@ def test_claude_sem_session_id_continua_funcionando():
     runner = RunnerService()
     cmd = runner.resolve_cli_command("SUBPROCESS_CLI", "migrar a silver", {"cli": "claude"})
     assert "--session-id" not in cmd
-    assert "migrar a silver" in cmd
+    # O prompt NÃO vai mais no comando: claude.cmd é batch e o cmd.exe
+    # corta na primeira quebra de linha. Ele viaja pela entrada padrão
+    # (ver test_prompt_multilinha_para_claude.py).
+    assert "migrar a silver" not in cmd
 
 
 def test_antigravity_conversation_id_e_extraido_da_saida():

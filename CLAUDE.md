@@ -11,7 +11,7 @@ revisa o diff antes de aprovar o merge.
 WebSocket para tempo real. Fortemente orientado a **Windows**.
 
 **Estrutura**: `backend/app/{api,services,core,models,websockets}` · `frontend/src/{components,hooks,services,types}` ·
-`backend/tests/` (246 testes) · `frontend/src/**/*.test.tsx` (vitest, 8 testes) · `docs/{specs,plans,mockups}`.
+`backend/tests/` (252 testes) · `frontend/src/**/*.test.tsx` (vitest, 8 testes) · `docs/{specs,plans,mockups}`.
 
 Para a arquitetura detalhada, veja [docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md).
 
@@ -49,6 +49,14 @@ continuaria "Rodando" para sempre.
 - **PID sozinho não identifica processo** no Windows, que recicla PIDs. Sempre compare também
   o instante de início.
 - Abrir a aba de diff **cria um commit** na branch da tarefa (auto-snapshot).
+- **Nunca passe texto multilinha como argumento para um `.cmd`.** O `claude.cmd` é
+  batch, e o cmd.exe **corta o argumento na primeira quebra de linha** — medido: 90
+  caracteres em 6 linhas entraram, 1 linha saiu. O agente recebia só o começo do
+  prompt, terminava com `rc=0` sem fazer nada, e o card dizia "Entregou". Não há
+  escape que resolva: o prompt do Claude Code vai pela **entrada padrão**
+  (`run_wrapper --stdin`). O `agy` é `.exe` e não tem esse problema.
+  ⚠️ `assistant_service._call_claude_cli` (o chat) **ainda passa por argv** — mensagem
+  de chat com mais de uma linha chega cortada.
 - **O refino é IA e pode falhar — e falhar é o comportamento certo.** Sem chave
   de API ou com resposta inválida, `/refine` devolve 502 e a tarefa fica em `DRAFT`.
   Não acrescente fallback heurístico: a versão antiga era regex, nunca falhava, e

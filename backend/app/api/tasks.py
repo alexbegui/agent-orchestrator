@@ -770,7 +770,7 @@ async def refine_task(task_id: str, db: Session = Depends(get_db)):
     return task
 
 
-async def _run_task_background(task_id: str, project_path: str, command: list[str], db_session_factory, is_assistant: bool = False, prompt: str = ""):
+async def _run_task_background(task_id: str, project_path: str, command: list[str], db_session_factory, is_assistant: bool = False, prompt: str = "", prompt_por_stdin: bool = False):
     worktree_path = git_service.get_worktree_path(project_path, task_id)
     conv_id = None
     try:
@@ -810,7 +810,13 @@ async def _run_task_background(task_id: str, project_path: str, command: list[st
         else:
             # Desacoplado: o agente sobrevive a reinícios do servidor e só para
             # quando o usuário mandar (ver artefato agentes-sobrevivem-ao-servidor).
-            pid = runner_service.launch_detached(task_id, command, cwd=worktree_path)
+            pid = runner_service.launch_detached(
+                task_id, command, cwd=worktree_path,
+                # O Claude Code recebe o prompt por aqui, não pelo argv: o
+                # claude.cmd é batch e o cmd.exe corta na primeira quebra de
+                # linha (ver runner_service.prompt_por_stdin).
+                prompt_stdin=prompt if prompt_por_stdin else None,
+            )
             if pid:
                 await ws_manager.broadcast_task(task_id, {
                     "type": "LOG",
@@ -946,7 +952,8 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
         cmd,
         SessionLocal,
         is_assistant,
-        prompt
+        prompt,
+        runner_service.prompt_por_stdin(task.runner_config),
     )
     return task
 

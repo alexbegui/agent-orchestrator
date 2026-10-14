@@ -44,12 +44,29 @@ class RunnerService:
     def _agentapi_padrao() -> Optional[str]:
         return find_agentapi()
 
+    @staticmethod
+    def prompt_por_stdin(config: Optional[dict] = None) -> bool:
+        """
+        Este motor quer o prompt pela entrada padrão em vez do argv?
+
+        Só o Claude Code: ele é despachado por `claude.cmd`, e arquivo batch
+        tem o argumento cortado na primeira quebra de linha. O agy é .exe de
+        verdade e recebe `-p=<prompt>` sem problema — mexer nele desfaria uma
+        correção que já custou caro.
+        """
+        cfg = config or {}
+        escolha = (cfg.get("cli") or cfg.get("cli_cmd") or "").lower()
+        return "claude" in escolha
+
+    def _claude_padrao(self) -> str:
+        return shutil.which("claude.cmd") or shutil.which("claude") or "claude"
+
     def resolve_cli_command(self, runner_type: str, prompt: str, config: Optional[dict] = None) -> list[str]:
         cfg = config or {}
         cli_choice = (cfg.get("cli") or cfg.get("cli_cmd") or runner_type or "").lower()
 
         if "claude" in cli_choice:
-            cmd = shutil.which("claude.cmd") or shutil.which("claude") or "claude"
+            cmd = self._claude_padrao()
             args = [cmd, "-p"]
 
             # `claude -p` é não-interativo: sem um modo explícito, tudo que
@@ -61,23 +78,45 @@ class RunnerService:
 
             # A sessão nomeada permite que o chat retome, depois, o MESMO agente
             # que executou a tarefa — em vez de falar com um que nunca a viu.
+            #
+            # `--session-id` CRIA a sessão e recusa um id já existente
+            # ("Error: Session ID ... is already in use", rc=1, morte em 0,3s).
+            # Reaproveitar o mesmo id a cada ▶ Rodar fazia toda execução depois
+            # da primeira morrer no primeiro segundo, parecendo "executando sem
+            # entregar". Sessão já criada se retoma com `--resume`.
             session_id = cfg.get("claude_session_id")
             if session_id:
-                args += ["--session-id", session_id]
+                if cfg.get("claude_session_started"):
+                    args += ["--resume", session_id]
+                else:
+                    args += ["--session-id", session_id]
 
-            args.append(prompt)
+            # O PROMPT NÃO ENTRA NA LINHA DE COMANDO — vai pela entrada padrão.
+            #
+            # `claude.cmd` é um arquivo batch, e o cmd.exe corta o argumento na
+            # primeira quebra de linha. Medido com um .cmd espião: entraram 90
+            # caracteres em 6 linhas, saiu uma linha. O agente recebia só o
+            # começo do prompt, terminava com rc=0 sem fazer nada, e o card
+            # mostrava "Entregou" — ele chegou a responder "não sei qual é a
+            # tarefa". Não há escape que resolva; o texto tem de sair do argv.
+            #
+            # Quem entrega é o run_wrapper, via `--stdin <arquivo>`.
             return args
         elif any(k in cli_choice for k in ["agy", "gemini", "antigravity", "agentapi"]):
             # O `agy` é o CLI independente: não exige o IDE aberto nem token CSRF.
             agy = self._agy_padrao()
             if agy:
-                args = [agy, "-p", "--dangerously-skip-permissions"]
+                # O agy toma o argumento SEGUINTE a -p como sendo o prompt. Com a
+                # flag de permissão logo depois, ele respondia à flag e descartava
+                # a tarefa ("-p took "--dangerously-skip-permissions" as its
+                # prompt ... was ignored", rc=2) — o motor agy nunca funcionou.
+                # O próprio CLI indica a forma correta: -p=<prompt>.
+                args = [agy, f"-p={prompt}", "--dangerously-skip-permissions"]
                 conv_id = cfg.get("antigravity_conversation_id")
                 if conv_id:
                     args += ["--conversation", conv_id]
                 if cfg.get("model"):
                     args += ["--model", cfg["model"]]
-                args.append(prompt)
                 return args
 
             # Fallback legado: o agentapi embutido no IDE, que só funciona com
@@ -117,7 +156,9 @@ class RunnerService:
                 return conv_id
         return None
 
-    def launch_detached(self, task_id: str, command: list[str], cwd: str) -> Optional[int]:
+    def launch_detached(
+        self, task_id: str, command: list[str], cwd: str, prompt_stdin: Optional[str] = None
+    ) -> Optional[int]:
         """
         Dispara o agente DESACOPLADO do servidor: ele sobrevive a reinícios do
         uvicorn e só termina sozinho ou quando o usuário mandar parar.
@@ -146,8 +187,18 @@ class RunnerService:
         # filho, só ele mesmo pode registrar com que código terminou.
         envoltorio = [
             sys.executable, "-m", "app.services.run_wrapper",
-            run_registry.run_json(cwd), "--", *command
+            run_registry.run_json(cwd),
         ]
+        if prompt_stdin:
+            # Em arquivo, e não por pipe: o processo é DESACOPLADO, então não
+            # sobra ninguém do nosso lado para alimentar o cano depois que o
+            # servidor segue a vida. O arquivo fica no .run/, que já é ignorado
+            # pelo git junto com o resto do rastro da execução.
+            caminho = os.path.join(run_registry.run_dir(cwd), "prompt.txt")
+            with open(caminho, "w", encoding="utf-8", newline="\n") as f:
+                f.write(prompt_stdin)
+            envoltorio += ["--stdin", caminho]
+        envoltorio += ["--", *command]
         env["PYTHONPATH"] = os.pathsep.join(
             filter(None, [self._backend_dir(), env.get("PYTHONPATH", "")])
         )

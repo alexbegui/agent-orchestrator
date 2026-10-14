@@ -7,7 +7,12 @@ descartou essa informação. Em vez de adivinhar, quem termina registra:
 este envoltório executa o agente e grava o resultado no run.json.
 
 Rodado como:
-    python -m app.services.run_wrapper <run.json> -- <comando...>
+    python -m app.services.run_wrapper <run.json> [--stdin <arquivo>] -- <comando...>
+
+O `--stdin` existe porque o Claude Code é despachado por `claude.cmd`, e
+arquivo batch tem o argumento cortado na primeira quebra de linha pelo cmd.exe
+— o agente recebia só o começo do prompt. O texto vai por aqui, que não passa
+pelo interpretador de linha de comando.
 """
 import json
 import os
@@ -40,13 +45,27 @@ def main(argv: list) -> int:
 
     corte = argv.index("--")
     run_json = argv[0]
+    antes = argv[1:corte]
     comando = argv[corte + 1:]
     if not comando:
         print("[run_wrapper] nenhum comando informado", file=sys.stderr)
         return 2
 
+    arquivo_stdin = None
+    if "--stdin" in antes:
+        i = antes.index("--stdin")
+        if i + 1 < len(antes):
+            arquivo_stdin = antes[i + 1]
+
     try:
-        proc = subprocess.run(comando, cwd=os.getcwd())
+        if arquivo_stdin:
+            # Em bytes, não em texto: o prompt é UTF-8 e o console do Windows
+            # não é. Deixar o Python recodificar aqui corromperia acento, que
+            # é metade do texto num projeto que escreve em português.
+            with open(arquivo_stdin, "rb") as entrada:
+                proc = subprocess.run(comando, cwd=os.getcwd(), stdin=entrada)
+        else:
+            proc = subprocess.run(comando, cwd=os.getcwd())
         rc = proc.returncode
     except FileNotFoundError:
         print(f"[run_wrapper] executável não encontrado: {comando[0]}", file=sys.stderr)

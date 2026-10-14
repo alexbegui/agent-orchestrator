@@ -37,7 +37,10 @@ def test_permission_mode_convive_com_session_id():
     )
     assert "--session-id" in cmd
     assert "--permission-mode" in cmd
-    assert "faça X" in cmd
+    # O prompt NÃO vai mais no comando: claude.cmd é batch e o cmd.exe
+    # corta na primeira quebra de linha. Ele viaja pela entrada padrão
+    # (ver test_prompt_multilinha_para_claude.py).
+    assert "faça X" not in cmd
 
 
 def test_antigravity_nao_recebe_flag_do_claude():

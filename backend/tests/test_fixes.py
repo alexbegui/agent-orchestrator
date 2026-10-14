@@ -76,8 +76,12 @@ def test_runner_resolves_claude_and_agy_commands():
     cmd_claude = runner.resolve_cli_command("SUBPROCESS_CLI", "Refatorar", {"cli": "claude"})
     assert "claude" in cmd_claude[0].lower()
     assert "-p" in cmd_claude
-    assert "Refatorar" in cmd_claude
+    # O prompt NÃO vai no comando do claude: claude.cmd é batch e o cmd.exe
+    # corta na primeira quebra de linha. Viaja pela entrada padrão
+    # (ver test_prompt_multilinha_para_claude.py).
+    assert "Refatorar" not in cmd_claude
 
     cmd_agy = runner.resolve_cli_command("SUBPROCESS_CLI", "Criar tela", {"cli": "agy"})
     assert "agy" in cmd_agy[0].lower() or "agentapi" in cmd_agy[0].lower()
-    assert "Criar tela" in cmd_agy
+    # No agy o prompt vai anexado (-p=<prompt>); no agentapi, solto.
+    assert "Criar tela" in cmd_agy or "-p=Criar tela" in cmd_agy
