@@ -119,9 +119,15 @@ class ArtifactService:
         if not base or not os.path.isdir(base):
             return []
 
+        # NORMALIZA ANTES DE JUNTAR. As duas fontes falam separadores
+        # diferentes: o git devolve `.agent/artefatos/x.md` e o os.path.relpath
+        # do `_da_pasta_combinada` devolve `.agent\artefatos\x.md` no Windows.
+        # São o mesmo arquivo e duas strings, então o set guardava os dois e o
+        # usuário via a entrada em dobro na aba Artefatos. Em Linux nunca
+        # acontecia — foi preciso uma execução real do agy para aparecer.
         relativos = set()
-        relativos.update(self._do_git(base))
-        relativos.update(self._da_pasta_combinada(base))
+        for rel in list(self._do_git(base)) + list(self._da_pasta_combinada(base)):
+            relativos.add(rel.replace("\\", "/"))
 
         itens = []
         for rel in sorted(relativos):
