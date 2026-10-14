@@ -83,7 +83,7 @@ def test_chat_retoma_a_sessao_criada_pela_execucao(client, tmp_path):
         class _Proc:
             returncode = 0
 
-            async def communicate(self):
+            async def communicate(self, input=None):
                 return (b"porque a silver precisa de deduplicacao", b"")
 
         return _Proc()
@@ -121,7 +121,7 @@ def test_ponte_funciona_com_o_dicionario_vazio(client, tmp_path):
         class _Proc:
             returncode = 0
 
-            async def communicate(self):
+            async def communicate(self, input=None):
                 return (b"ok", b"")
 
         return _Proc()

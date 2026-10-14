@@ -89,7 +89,7 @@ def test_chat_nao_fica_preso_quando_o_cli_nao_responde(client, tmp_path):
             returncode = None
             pid = 4242
 
-            async def communicate(self):
+            async def communicate(self, input=None):
                 await asyncio.sleep(3600)  # nunca volta
 
             def kill(self):

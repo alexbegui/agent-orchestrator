@@ -154,15 +154,22 @@ def extrair_structured_output(saida: str) -> str:
     return json.dumps(estruturado, ensure_ascii=False)
 
 
-async def _comunicar_com_teto(proc, rotulo: str):
+async def _comunicar_com_teto(proc, rotulo: str, entrada: Optional[str] = None):
     """
     Espera a saída do processo, mas desiste no teto e mata a árvore.
 
     Devolve (stdout, stderr) ou None quando estourou — quem chama trata o None
     como "este motor não respondeu" e cai para o próximo.
+
+    `entrada` vai pela entrada padrão, em UTF-8. É por onde o texto do chat
+    viaja no Claude Code: no argv ele seria cortado na primeira quebra de linha
+    pelo cmd.exe.
     """
     try:
-        return await asyncio.wait_for(proc.communicate(), timeout=CHAT_CLI_TIMEOUT)
+        return await asyncio.wait_for(
+            proc.communicate(input=entrada.encode("utf-8") if entrada is not None else None),
+            timeout=CHAT_CLI_TIMEOUT,
+        )
     except asyncio.TimeoutError:
         logger.error(
             f"{rotulo} não respondeu em {CHAT_CLI_TIMEOUT}s; encerrando o processo"
@@ -615,26 +622,39 @@ class AssistantService:
         modo = getattr(settings, "CLAUDE_PERMISSION_MODE", None) or "bypassPermissions"
         base = [claude_cmd, "-p", "--permission-mode", modo]
 
+        # O TEXTO NÃO ENTRA NA LINHA DE COMANDO — vai pela entrada padrão.
+        #
+        # claude.cmd é arquivo batch, e o cmd.exe corta o argumento na primeira
+        # quebra de linha. Na PRIMEIRA mensagem o estrago era total: o preâmbulo
+        # abaixo tem `\n\n` antes de "Mensagem do usuário", então a pergunta era
+        # descartada inteira mesmo com uma linha só, e o agente respondia algo
+        # genérico sobre a tarefa. Nas seguintes, só cortava mensagem de várias
+        # linhas — colar um erro, escrever em tópicos.
+        #
+        # É um defeito SILENCIOSO: a resposta sai coerente com o pedaço que
+        # chegou, e o usuário conclui que o agente "não entendeu".
         if known:
-            cmd = base + ["--resume", known, user_message]
+            cmd = base + ["--resume", known]
+            texto = user_message
         else:
             new_session = str(uuid.uuid4())
-            prompt = (
+            cmd = base + ["--session-id", new_session]
+            texto = (
                 f"Você é o Engenheiro de Software Sênior do Agent Orchestrator "
                 f"trabalhando no projeto '{project_name}'. "
                 f"Tarefa: '{task_title}'. Requisito: '{task_prompt}'.\n\n"
                 f"Mensagem do usuário: {user_message}"
             )
-            cmd = base + ["--session-id", new_session, prompt]
             known = new_session
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=cwd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        resultado = await _comunicar_com_teto(proc, "Claude CLI")
+        resultado = await _comunicar_com_teto(proc, "Claude CLI", entrada=texto)
         if resultado is None:
             return None
         stdout, stderr = resultado

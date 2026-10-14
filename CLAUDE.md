@@ -11,7 +11,7 @@ revisa o diff antes de aprovar o merge.
 WebSocket para tempo real. Fortemente orientado a **Windows**.
 
 **Estrutura**: `backend/app/{api,services,core,models,websockets}` · `frontend/src/{components,hooks,services,types}` ·
-`backend/tests/` (264 testes) · `frontend/src/**/*.test.tsx` (vitest, 8 testes) · `docs/{specs,plans,mockups}`.
+`backend/tests/` (270 testes) · `frontend/src/**/*.test.tsx` (vitest, 8 testes) · `docs/{specs,plans,mockups}`.
 
 Para a arquitetura detalhada, veja [docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md).
 
@@ -54,9 +54,12 @@ continuaria "Rodando" para sempre.
   caracteres em 6 linhas entraram, 1 linha saiu. O agente recebia só o começo do
   prompt, terminava com `rc=0` sem fazer nada, e o card dizia "Entregou". Não há
   escape que resolva: o prompt do Claude Code vai pela **entrada padrão**
-  (`run_wrapper --stdin`). O `agy` é `.exe` e não tem esse problema.
-  ⚠️ `assistant_service._call_claude_cli` (o chat) **ainda passa por argv** — mensagem
-  de chat com mais de uma linha chega cortada.
+  (`run_wrapper --stdin`). O `agy` é `.exe` e não tem esse problema. O chat segue a
+  mesma regra (`_comunicar_com_teto(entrada=...)`): na primeira mensagem o preâmbulo
+  tem `
+
+` antes da pergunta, então ela era descartada inteira e o agente respondia
+  algo genérico — defeito silencioso, sem sintoma na tela.
 - **O refino usa o CLI da própria tarefa**, com `--json-schema` obrigando o formato
   — sem chave de API, na assinatura que o usuário já paga. Quem refina é o motor que
   vai executar. Os dois CLIs devolvem o objeto no campo `structured_output`, e exigem

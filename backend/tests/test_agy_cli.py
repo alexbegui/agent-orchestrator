@@ -67,7 +67,7 @@ async def test_chat_usa_agy_e_retoma_a_conversa():
         class _Proc:
             returncode = 0
 
-            async def communicate(self):
+            async def communicate(self, input=None):
                 return (b"resposta do agy", b"")
 
         return _Proc()
