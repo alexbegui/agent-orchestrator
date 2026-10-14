@@ -250,4 +250,9 @@ async def test_sem_chave_de_api_o_motor_recusa_em_vez_de_inventar(monkeypatch):
     with pytest.raises(MotorIndisponivel) as erro:
         await AssistantService().completar_json("qualquer prompt")
 
-    assert "chave" in str(erro.value).lower()
+    # A mensagem precisa apontar OS DOIS caminhos: o CLI da tarefa (que não
+    # exige chave) e a chave de API. Mensagem que só fala de chave manda o
+    # usuário abrir conta sem precisar.
+    texto = str(erro.value).lower()
+    assert "cli" in texto
+    assert "api_key" in texto

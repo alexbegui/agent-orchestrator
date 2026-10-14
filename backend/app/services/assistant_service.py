@@ -23,6 +23,10 @@ CHAT_CLI_TIMEOUT = 600.0
 # respondeu em 2 minutos, respondeu errado.
 REFINO_TIMEOUT = 120.0
 
+# O CLI é lento: medido em 13/10, o agy leva ~39s num refino e o claude ~4s.
+# O teto cobre o pior caso com folga sem prender a requisição para sempre.
+REFINO_CLI_TIMEOUT = 300.0
+
 
 # Abaixo do mínimo do modelo a marca de cache não cacheia nada e NÃO dá erro —
 # fica `cache_creation_input_tokens: 0` em silêncio. No Opus 5.5 o mínimo é 512
@@ -61,6 +65,93 @@ class MotorIndisponivel(Exception):
     spec de verdade. Aprovar aquilo achando que veio da IA é pior que ficar
     sem spec, então aqui a ausência de motor é erro, nunca um fallback.
     """
+
+
+def montar_comando_json(
+    runner_config: Optional[Dict[str, Any]],
+    prompt: str,
+    prefixo: str,
+    esquema: Dict[str, Any],
+    caminho_agy: Optional[str],
+    caminho_claude: Optional[str],
+) -> tuple:
+    """
+    Monta a chamada de refino pelo CLI da própria tarefa, ou (None, None).
+
+    Devolve `(comando, texto_para_stdin)`. O CLI que refina é o mesmo que vai
+    executar a tarefa: a ordem de serviço sai na linguagem de quem vai cumpri-la.
+
+    `--json-schema` OBRIGA a resposta ao formato — verificado nos dois binários
+    em 13/10/2026. É mais forte que o caminho de API como está implementado,
+    onde pedimos JSON no texto e validamos depois. Os dois exigem
+    `--output-format json` junto ("--json-schema can only be used when
+    --output-format is 'json' or 'stream-json'").
+
+    O esquema vai serializado em UMA linha: ele é argumento de linha de
+    comando, e para o claude.cmd uma quebra de linha ali cortaria o argumento
+    — o mesmo defeito que tirou o prompt do argv.
+    """
+    escolha = str((runner_config or {}).get("cli", "")).lower()
+    texto = f"{prefixo}\n\n{prompt}".strip() if prefixo else prompt
+    esquema_str = json.dumps(esquema, ensure_ascii=False, separators=(",", ":"))
+
+    if "claude" in escolha:
+        if not caminho_claude:
+            return None, None
+        cmd = [
+            caminho_claude, "-p",
+            "--permission-mode", "bypassPermissions",
+            "--json-schema", esquema_str,
+            "--output-format", "json",
+        ]
+        # Pela entrada padrão: claude.cmd é batch e o cmd.exe corta o argumento
+        # na primeira quebra de linha — o prompt de refino tem dezenas.
+        return cmd, texto
+
+    if any(k in escolha for k in ("agy", "gemini", "antigravity")):
+        if not caminho_agy:
+            return None, None
+        # O agy toma o argumento SEGUINTE a -p como prompt; com a flag logo
+        # depois ele respondia à flag e descartava a tarefa. A forma correta,
+        # indicada pelo próprio CLI, é -p=<prompt>.
+        cmd = [
+            caminho_agy, f"-p={texto}",
+            "--json-schema", esquema_str,
+            "--output-format", "json",
+            "--dangerously-skip-permissions",
+        ]
+        return cmd, None
+
+    return None, None
+
+
+def extrair_structured_output(saida: str) -> str:
+    """
+    Tira o objeto do envelope que os CLIs devolvem em --output-format json.
+
+    Os dois usam o MESMO nome de campo, `structured_output` — conferido nos
+    binários reais. O `response`/`result` ao lado traz o mesmo conteúdo em
+    texto, às vezes com sujeira do próprio CLI (o agy anexa `toolAction` e
+    `toolSummary`); por isso lemos o campo estruturado, não o texto.
+
+    Sem o campo, o CLI não obedeceu ao esquema. Cair para o texto solto seria
+    aceitar prosa como spec — exatamente o defeito do regex que este caminho
+    veio substituir.
+    """
+    bruto = (saida or "").strip()
+    if not bruto:
+        raise MotorIndisponivel("O CLI não devolveu nada.")
+    try:
+        envelope = json.loads(bruto)
+    except (json.JSONDecodeError, ValueError):
+        raise MotorIndisponivel(f"O CLI não devolveu JSON. Começo: {bruto[:200]!r}")
+
+    estruturado = envelope.get("structured_output") if isinstance(envelope, dict) else None
+    if estruturado is None:
+        raise MotorIndisponivel(
+            "O CLI respondeu sem obedecer ao esquema (sem `structured_output`)."
+        )
+    return json.dumps(estruturado, ensure_ascii=False)
 
 
 async def _comunicar_com_teto(proc, rotulo: str):
@@ -181,33 +272,62 @@ class AssistantService:
         proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
         return httpx.AsyncClient(proxy=proxy, timeout=60.0)
 
-    async def completar_json(self, prompt: str, prefixo: str = "", max_tokens: int = 4000) -> str:
+    async def completar_json(
+        self,
+        prompt: str,
+        prefixo: str = "",
+        max_tokens: int = 4000,
+        runner_config: Optional[Dict[str, Any]] = None,
+        esquema: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """
-        Uma chamada curta de API direta que devolve texto (esperado: JSON).
+        Uma chamada curta que devolve JSON — pelo CLI da tarefa ou pela API.
 
-        Usa API direta — não os CLIs — de propósito: o refino precisa de
-        resposta estruturada em segundos, e CLI responde em prosa e demora.
-        Anthropic primeiro, Gemini como segunda opção.
+        ORDEM: o CLI primeiro. Ele roda na assinatura que o usuário já paga,
+        não exige chave de API, e `--json-schema` OBRIGA a resposta ao formato
+        (mais forte que a API como está aqui, onde pedimos JSON no texto e
+        validamos depois). E quem refina passa a ser o mesmo motor que vai
+        executar: a ordem de serviço sai na linguagem de quem vai cumpri-la.
+
+        A API vem depois, para quem tiver chave e quiser velocidade — medido
+        em 13/10: ~4s pela API contra ~39s pelo agy.
 
         `prefixo` é a parte estável do prompt (instruções, conhecimento do
-        projeto, árvore de arquivos) e vai antes, marcada para cache; `prompt`
-        é a parte que muda a cada tarefa. Ver `montar_blocos_cacheaveis`.
+        projeto, árvore de arquivos) e vai antes, marcada para cache no caminho
+        de API; `prompt` é a parte que muda a cada tarefa. O CLI gerencia o
+        próprio contexto e não aceita marca de cache — ali os dois são
+        concatenados.
 
         NÃO cai para o motor local embutido: ele não lê o projeto nem escreve
         código, e a spec que ele produziria seria genérica — exatamente o
         defeito do regex que este caminho veio substituir. Sem motor real,
         levanta MotorIndisponivel e a tarefa não avança.
         """
+        falhas: List[str] = []
+
+        if esquema:
+            cmd, entrada = montar_comando_json(
+                runner_config, prompt, prefixo, esquema,
+                caminho_agy=self._find_agy_cmd(),
+                caminho_claude=self._find_claude_cmd(),
+            )
+            if cmd:
+                try:
+                    return await self._json_por_cli(cmd, entrada)
+                except Exception as e:
+                    logger.error(f"Refino pelo CLI falhou: {e}")
+                    falhas.append(f"CLI: {self._motivo(e)}")
+
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY") or getattr(settings, "ANTHROPIC_API_KEY", None)
         gemini_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None)
 
         if not anthropic_key and not gemini_key:
             raise MotorIndisponivel(
-                "Nenhuma chave de API configurada. Informe ANTHROPIC_API_KEY ou "
-                "GEMINI_API_KEY em Ajustes para lapidar o prompt."
+                "Nenhum motor disponível para lapidar o prompt. "
+                + ("; ".join(falhas) + ". " if falhas else "")
+                + "Escolha um motor de CLI (Claude Code ou agy) na tarefa, ou "
+                "informe ANTHROPIC_API_KEY/GEMINI_API_KEY em Ajustes."
             )
-
-        falhas: List[str] = []
 
         if anthropic_key:
             try:
@@ -226,6 +346,42 @@ class AssistantService:
                 falhas.append(f"Gemini: {self._motivo(e)}")
 
         raise MotorIndisponivel("Nenhum motor respondeu — " + "; ".join(falhas))
+
+    async def _json_por_cli(self, cmd: List[str], entrada: Optional[str]) -> str:
+        """
+        Roda o CLI e devolve o objeto que ele produziu sob o esquema.
+
+        O prompt vai por stdin quando `entrada` existe — é o caso do Claude
+        Code, despachado por claude.cmd, que é batch e teria o argumento
+        cortado na primeira quebra de linha.
+        """
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE if entrada is not None else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            # Teto próprio: medido em 13/10, o agy leva ~39s num refino. Sem
+            # teto, um CLI que não retorna prenderia a requisição para sempre.
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=entrada.encode("utf-8") if entrada is not None else None),
+                timeout=REFINO_CLI_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise MotorIndisponivel(
+                f"O CLI não respondeu em {int(REFINO_CLI_TIMEOUT)}s ao lapidar o prompt."
+            )
+
+        if proc.returncode != 0:
+            erro = stderr.decode("utf-8", errors="replace").strip()[:300]
+            raise MotorIndisponivel(f"O CLI saiu com código {proc.returncode}: {erro}")
+
+        return extrair_structured_output(stdout.decode("utf-8", errors="replace"))
 
     @staticmethod
     def _motivo(e: Exception) -> str:

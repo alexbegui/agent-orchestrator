@@ -11,7 +11,7 @@ revisa o diff antes de aprovar o merge.
 WebSocket para tempo real. Fortemente orientado a **Windows**.
 
 **Estrutura**: `backend/app/{api,services,core,models,websockets}` · `frontend/src/{components,hooks,services,types}` ·
-`backend/tests/` (252 testes) · `frontend/src/**/*.test.tsx` (vitest, 8 testes) · `docs/{specs,plans,mockups}`.
+`backend/tests/` (264 testes) · `frontend/src/**/*.test.tsx` (vitest, 8 testes) · `docs/{specs,plans,mockups}`.
 
 Para a arquitetura detalhada, veja [docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md).
 
@@ -57,8 +57,13 @@ continuaria "Rodando" para sempre.
   (`run_wrapper --stdin`). O `agy` é `.exe` e não tem esse problema.
   ⚠️ `assistant_service._call_claude_cli` (o chat) **ainda passa por argv** — mensagem
   de chat com mais de uma linha chega cortada.
-- **O refino é IA e pode falhar — e falhar é o comportamento certo.** Sem chave
-  de API ou com resposta inválida, `/refine` devolve 502 e a tarefa fica em `DRAFT`.
+- **O refino usa o CLI da própria tarefa**, com `--json-schema` obrigando o formato
+  — sem chave de API, na assinatura que o usuário já paga. Quem refina é o motor que
+  vai executar. Os dois CLIs devolvem o objeto no campo `structured_output`, e exigem
+  `--output-format json` junto. A API direta continua como opção para quem tem chave
+  (~4s contra ~50s do CLI).
+- **O refino pode falhar — e falhar é o comportamento certo.** Sem motor nenhum
+  ou com resposta inválida, `/refine` devolve 502 e a tarefa fica em `DRAFT`.
   Não acrescente fallback heurístico: a versão antiga era regex, nunca falhava, e
   produzia spec genérica indistinguível de uma spec real. O portão de aprovação
   só vale se o que está atrás dele for genuíno.

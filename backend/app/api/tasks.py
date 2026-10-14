@@ -756,6 +756,10 @@ async def refine_task(task_id: str, db: Session = Depends(get_db)):
             ler=ler,
             recentes=git_service.arquivos_recentes(raiz),
             conhecimento=artifact_service.contexto_para_prompt(raiz),
+            # Quem refina é o motor que VAI EXECUTAR a tarefa: a ordem de
+            # serviço sai na linguagem de quem vai cumpri-la, e roda na
+            # assinatura que o usuário já paga, sem exigir chave de API.
+            runner_config=task.runner_config,
         )
     except (MotorIndisponivel, RespostaInvalida) as e:
         # A tarefa NÃO avança. Antes a rota não tinha como falhar (o regex

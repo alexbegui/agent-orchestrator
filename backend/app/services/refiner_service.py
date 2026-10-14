@@ -38,6 +38,16 @@ class RespostaInvalida(Exception):
     """
 
 
+class ArquivoEscolhido(BaseModel):
+    caminho: str = Field(description="Caminho exato, copiado da lista de arquivos")
+    motivo: str = Field(description="Em uma frase, por que este arquivo")
+
+
+class EscolhaDeArquivos(BaseModel):
+    """Resposta da primeira chamada. Vira o `--json-schema` do CLI."""
+    arquivos: list[ArquivoEscolhido]
+
+
 class PlanoDeTeste(BaseModel):
     arquivo: str = Field(description="Arquivo de teste a criar ou editar")
     nome: str = Field(description="Nome da função de teste")
@@ -145,19 +155,29 @@ class PromptRefinerService:
     def __init__(self, motor: Optional[Callable[[str], Awaitable[str]]] = None):
         # Motor injetável: os testes passam um falso e nenhum deles toca a rede.
         self._motor = motor
+        # Qual CLI a tarefa usa — definido por chamada, em `refinar`. Quem
+        # refina passa a ser o mesmo motor que vai executar a tarefa.
+        self._runner_config = None
 
-    async def _perguntar(self, prompt: str, prefixo: str = "") -> str:
+    async def _perguntar(
+        self, prompt: str, prefixo: str = "", esquema: Optional[dict] = None
+    ) -> str:
         """
         `prefixo` é a parte do prompt que NÃO muda entre tarefas do mesmo
-        projeto, e vai marcada para prompt caching. Ver
+        projeto, e vai marcada para prompt caching no caminho de API. Ver
         `assistant_service.montar_blocos_cacheaveis`.
+
+        `esquema` é o JSON Schema da resposta. Quando há, o CLI da tarefa pode
+        refinar sem chave de API, com `--json-schema` obrigando o formato.
         """
         if self._motor is not None:
             return await self._motor(prompt, prefixo)
         # Import tardio: assistant_service é pesado e só é necessário em
         # produção — os testes injetam o motor e nunca chegam aqui.
         from app.services.assistant_service import assistant_service
-        return await assistant_service.completar_json(prompt, prefixo=prefixo)
+        return await assistant_service.completar_json(
+            prompt, prefixo=prefixo, runner_config=self._runner_config, esquema=esquema
+        )
 
     async def refinar(
         self,
@@ -166,7 +186,9 @@ class PromptRefinerService:
         ler: Callable[[str], str],
         recentes: Optional[list[str]] = None,
         conhecimento: str = "",
+        runner_config: Optional[dict] = None,
     ) -> RefinedSpec:
+        self._runner_config = runner_config
         texto_arvore, aviso = montar_arvore(arvore, recentes=recentes)
         permitidos = set(arvore)
 
@@ -208,7 +230,9 @@ Responda em JSON:
         pedido = f"""## Pedido do usuário
 {raw_prompt}"""
 
-        dados = _extrair_json(await self._perguntar(pedido, prefixo))
+        dados = _extrair_json(
+            await self._perguntar(pedido, prefixo, EscolhaDeArquivos.model_json_schema())
+        )
         escolhas = dados.get("arquivos") or []
         if not isinstance(escolhas, list) or not escolhas:
             raise RespostaInvalida("A IA não escolheu nenhum arquivo.")
@@ -277,7 +301,7 @@ Responda em JSON:
   "acceptance_criteria": ["..."],
   "tests": [{{"arquivo": "...", "nome": "test_...", "prova": "..."}}]}}"""
 
-        dados = _extrair_json(await self._perguntar(prompt))
+        dados = _extrair_json(await self._perguntar(prompt, esquema=RefinedSpec.model_json_schema()))
         try:
             # Pydantic é o portão: JSON bem formado mas sem os campos não vira
             # spec. Sem isso, uma resposta vazia viraria uma spec vazia de
