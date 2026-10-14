@@ -21,6 +21,14 @@ PROPOSTAS_FILE = os.path.join(".agent", "_proposto.md")
 # e o sinal se perde no ruído.
 MAX_PROPOSTAS = 3
 
+# Sumário de entrega que o agente escreve ao terminar (spec §8 e §7.2 item 3).
+# É o que o revisor lê ANTES do diff — e revisar diff de 500 linhas sem pista
+# nenhuma é o custo que ele existe para cortar.
+NOME_WALKTHROUGH = "walkthrough.md"
+
+# Sumário que não cabe na tela deixa de ser sumário.
+MAX_WALKTHROUGH = 6000
+
 KINDS = {
     ".md": "markdown", ".markdown": "markdown",
     ".html": "html", ".htm": "html",
@@ -495,6 +503,52 @@ class ArtifactService:
             "Registre o porquê, o que você tentou e falhou, e armadilhas.\n"
             "**Na maioria das tarefas, não escreva nada.**\n"
         )
+
+    def achar_walkthrough(self, worktree_path: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        O sumário de entrega que o agente deixou — ou None.
+
+        Procura na pasta de artefatos E na raiz do worktree, pelo mesmo motivo
+        de `listar_amplo` existir: o agente navega durante o trabalho e nem
+        sempre salva onde mandaram. Sumário que existe e não aparece é pior
+        que sumário ausente — o revisor conclui que ele não escreveu.
+
+        Devolve None quando não há, nunca um texto montado a partir do diff:
+        inventar o sumário seria declarar entrega sem evidência de entrega.
+        """
+        if not worktree_path or not os.path.isdir(worktree_path):
+            return None
+
+        candidatos = [
+            os.path.join(worktree_path, ARTIFACT_DIR, NOME_WALKTHROUGH),
+            os.path.join(worktree_path, NOME_WALKTHROUGH),
+        ]
+
+        for caminho in candidatos:
+            if not os.path.isfile(caminho):
+                continue
+            try:
+                with open(caminho, "r", encoding="utf-8", errors="replace") as f:
+                    texto = f.read().strip()
+            except OSError as e:
+                logger.warning(f"Sumário de entrega ilegível em {caminho}: {e}")
+                continue
+
+            # Arquivo criado e deixado em branco não é entrega.
+            if not texto:
+                continue
+
+            truncado = len(texto) > MAX_WALKTHROUGH
+            if truncado:
+                texto = texto[:MAX_WALKTHROUGH] + "\n…(sumário truncado)"
+
+            return {
+                "conteudo": texto,
+                "truncado": truncado,
+                "fora_da_pasta": caminho == candidatos[1],
+            }
+
+        return None
 
     def contexto_para_prompt(self, base: str) -> str:
         """

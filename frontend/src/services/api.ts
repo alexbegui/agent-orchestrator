@@ -82,6 +82,14 @@ export const api = {
        *  o arquivo. `name` é só o rótulo curto mostrado na tela. */
       rel_path?: string | null;
     }[];
+    /** Sumário que o agente escreveu ao terminar. `null` quando ele não
+     *  escreveu — nunca é montado a partir do diff. */
+    walkthrough: {
+      conteudo: string;
+      truncado: boolean;
+      /** O agente salvou fora da pasta da tarefa; achamos assim mesmo. */
+      fora_da_pasta: boolean;
+    } | null;
   }> {
     const res = await fetch(`${BASE_URL}/tasks/${taskId}/artifacts`);
     return handleResponse(res);

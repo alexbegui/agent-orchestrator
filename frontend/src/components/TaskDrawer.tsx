@@ -62,6 +62,9 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
   const [diffText, setDiffText] = useState('');
   const [loadingAction, setLoadingAction] = useState(false);
   const [erroRefino, setErroRefino] = useState<string | null>(null);
+  const [walkthrough, setWalkthrough] = useState<
+    { conteudo: string; truncado: boolean; fora_da_pasta: boolean } | null
+  >(null);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -135,15 +138,25 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     setOpenArtifact(null);
     api
       .getTaskArtifacts(task.id)
-      .then((res) => setArtifacts(res.artifacts))
+      .then((res) => {
+        setArtifacts(res.artifacts);
+        // `undefined` distingue "ainda não buscamos" de "buscamos e o agente
+        // não escreveu" (`null`) — a tela diz coisas diferentes nos dois casos.
+        setWalkthrough(res.walkthrough ?? null);
+      })
       .catch(console.error)
       .finally(() => setLoadingArtifacts(false));
   }, [task.id]);
 
   // Carrega ao abrir a aba. O agente pode criar arquivo a qualquer momento,
   // por isso o botão de recarregar logo abaixo.
+  //
+  // A aba de revisão também busca: o sumário de entrega vem nesta mesma
+  // resposta, e é lido ANTES do diff. Carregar só em "Artefatos" faria o
+  // sumário nunca aparecer para quem vai direto revisar — que é o caminho
+  // normal quando o card avisa "Entregou".
   useEffect(() => {
-    if (activeTab !== 'artifacts') return;
+    if (activeTab !== 'artifacts' && activeTab !== 'diff') return;
     carregarArtefatos();
   }, [activeTab, carregarArtefatos]);
 
@@ -983,6 +996,37 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
         {activeTab === 'diff' && (
           <div className="space-y-4">
+            {/* O sumário vem ANTES do diff porque é o que se lê antes dele.
+                Três linhas aqui mudam a economia de revisar 500 linhas ali. */}
+            {walkthrough ? (
+              <div className="p-3.5 rounded-lg bg-emerald-500/5 border border-emerald-500/30">
+                <div className="text-xs font-bold text-emerald-200 mb-2">
+                  O agente resumiu a entrega
+                </div>
+                {walkthrough.fora_da_pasta && (
+                  <p className="text-[10.5px] text-amber-300/80 mb-2">
+                    Salvo fora da pasta desta tarefa — achamos assim mesmo.
+                  </p>
+                )}
+                <div className="text-slate-200 text-xs">
+                  <MarkdownRenderer content={walkthrough.conteudo} />
+                </div>
+                {walkthrough.truncado && (
+                  <p className="text-[10.5px] text-[#8a93a8] mt-2">
+                    Sumário longo demais — mostrando só o começo.
+                  </p>
+                )}
+              </div>
+            ) : (
+              /* Dizer que não houve é diferente de não mostrar nada: aba vazia
+                 é indistinguível de falha ao carregar, e o usuário conclui que
+                 o sumário sumiu em vez de que não existe. */
+              <div className="p-3 rounded-lg border border-dashed border-[#262a3b] text-[11px] text-[#8a93a8]">
+                O agente não deixou um sumário de entrega. Leia o diff abaixo —
+                e, se quiser, peça o resumo pelo chat da tarefa.
+              </div>
+            )}
+
             {proposals.length > 0 && (
               <div className="p-3.5 rounded-lg bg-fuchsia-500/5 border border-fuchsia-500/30">
                 <div className="text-xs font-bold text-fuchsia-200 mb-1">

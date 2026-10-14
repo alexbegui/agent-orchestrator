@@ -20,6 +20,7 @@ from app.services.assistant_service import assistant_service, MotorIndisponivel
 from app.services.terminal_service import terminal_service
 from app.services.run_registry import run_registry
 from app.services.artifact_service import artifact_service
+from app.services import prompt_service
 from app.websockets.manager import ws_manager
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -498,6 +499,11 @@ def list_task_artifacts(task_id: str, db: Session = Depends(get_db)):
     return {
         "base": raiz or wt,
         "artifacts": artifact_service.listar_amplo(wt, raiz or wt),
+        # O sumário de entrega sai separado dos demais artefatos de propósito:
+        # ele é o que o revisor lê ANTES do diff, não mais um item de galeria.
+        # None quando o agente não escreveu — a tela diz isso, em vez de
+        # montar um sumário a partir do diff e fingir que veio dele.
+        "walkthrough": artifact_service.achar_walkthrough(wt),
     }
 
 
@@ -870,21 +876,37 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
-    prompt = task.refined_spec or task.raw_prompt
+    pedido = task.refined_spec or task.raw_prompt
 
-    # Cola o índice de conhecimento do projeto no começo do prompt. Vale para
-    # qualquer CLI — não depende do que cada um lê sozinho. Só o índice entra;
-    # os artefatos o agente abre sob demanda.
-    contexto = artifact_service.contexto_para_prompt(task.project.root_path)
-    if contexto:
-        prompt = f"{contexto}\n---\n\n{prompt}"
+    # ORDEM: o que não muda vem primeiro, o pedido da tarefa por último.
+    #
+    # As regras de trabalho e a memória do projeto são idênticas em toda tarefa
+    # deste projeto; o índice de conhecimento muda devagar. Pondo os três na
+    # frente, o prefixo do prompt se repete entre tarefas — que é o que o
+    # prompt caching dos provedores casa (spec §7.2 item 1). Inverter não dá
+    # erro: só faz o cache nunca acertar.
+    blocos = [
+        # Antes não havia NENHUMA regra de comportamento no prompt: ele dizia
+        # onde salvar e o que registrar, nunca como trabalhar. Cada tarefa era
+        # uma loteria de disciplina.
+        prompt_service.regras_de_trabalho(),
+        # O CLAUDE.md do projeto alvo, só para quem não o lê sozinho — o Claude
+        # Code já lê do cwd, e injetar seria pagar o token duas vezes.
+        prompt_service.memoria_do_projeto(task.project.root_path, task.runner_config),
+        # Só o ÍNDICE do conhecimento; os artefatos o agente abre sob demanda.
+        artifact_service.contexto_para_prompt(task.project.root_path),
+    ]
+    prefixo = "\n".join(b for b in blocos if b)
+    prompt = f"{prefixo}\n---\n\n{pedido}" if prefixo else pedido
 
     # Convida o agente a registrar o que aprendeu — com o padrão em "nada".
     prompt = f"{prompt}\n\n---\n{artifact_service.instrucao_de_conhecimento()}"
     # E diz onde ele deve salvar o que produzir, já que ele navega.
-    prompt += artifact_service.instrucao_de_local(
-        git_service.get_worktree_path(task.project.root_path, task.id)
-    )
+    worktree_desta_tarefa = git_service.get_worktree_path(task.project.root_path, task.id)
+    prompt += artifact_service.instrucao_de_local(worktree_desta_tarefa)
+    # Pede o sumário de entrega. Quem escreve é ele: o orquestrador não tem
+    # como gerar a partir do diff o que o agente TENTOU e falhou.
+    prompt += prompt_service.instrucao_de_entrega(worktree_desta_tarefa)
 
     is_assistant = (
         task.runner_type == RunnerType.DIRECT_API
