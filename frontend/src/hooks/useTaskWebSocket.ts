@@ -14,9 +14,13 @@ export function useTaskWebSocket(taskId: string | null, onNewMessage?: (msg: Mes
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
+    // Zera a cada MUDANÇA de tarefa, não só ao fechar o painel. Limpar apenas
+    // quando taskId virava null deixava os logs do agente anterior na aba Logs
+    // da tarefa nova — e nada mais os removia.
+    setLogs([]);
+    setTaskStatus(null);
+
     if (!taskId) {
-      setLogs([]);
-      setTaskStatus(null);
       return;
     }
 

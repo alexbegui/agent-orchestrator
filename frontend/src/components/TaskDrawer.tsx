@@ -61,6 +61,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
   const [inputMsg, setInputMsg] = useState('');
   const [diffText, setDiffText] = useState('');
   const [loadingAction, setLoadingAction] = useState(false);
+  const [erroRefino, setErroRefino] = useState<string | null>(null);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -90,18 +91,36 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     el.style.height = `${Math.min(el.scrollHeight, MAX_ALTURA_INPUT)}px`;
   }, [inputMsg]);
 
+  // Descarta o que não é desta tarefa. O canal já é por task_id, então isto é
+  // defesa em profundidade: uma mensagem que chegue por um socket antigo,
+  // durante a troca de tarefa, apareceria no chat errado.
   const handleNewMessage = useCallback((incoming: Message) => {
+    if (incoming.task_id && incoming.task_id !== task.id) return;
     setMessages((prev) => {
       if (prev.some((m) => m.id === incoming.id)) return prev;
       return [...prev, incoming];
     });
-  }, []);
+  }, [task.id]);
 
   const { logs, taskStatus } = useTaskWebSocket(task.id, handleNewMessage);
 
-  // Carrega histórico de mensagens
+  // Carrega histórico de mensagens.
+  //
+  // Zera ANTES de buscar: sem isso, as mensagens da tarefa anterior seguiam na
+  // tela durante toda a ida à rede, e o usuário via a resposta de uma tarefa no
+  // chat de outra. O `cancelado` descarta resposta que chega depois de o
+  // usuário já ter trocado de tarefa — ela encheria o chat errado.
   useEffect(() => {
-    api.getMessages(task.id).then(setMessages).catch(console.error);
+    let cancelado = false;
+    setMessages([]);
+    api.getMessages(task.id)
+      .then((msgs) => {
+        if (!cancelado) setMessages(msgs);
+      })
+      .catch(console.error);
+    return () => {
+      cancelado = true;
+    };
   }, [task.id]);
 
   // Rola suavemente para a última mensagem ao enviar ou receber nova
@@ -301,12 +320,20 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
   const handleRefinePrompt = async () => {
     setLoadingAction(true);
+    // Limpa o erro da tentativa anterior ANTES de tentar: deixá-lo na tela
+    // enquanto a nova chamada roda faz a tentativa em curso parecer uma falha.
+    setErroRefino(null);
     try {
       const updated = await api.refineTask(task.id);
       onTaskUpdated(updated);
       setActiveTab('spec');
     } catch (err) {
-      console.error(err);
+      // O backend manda o motivo real no corpo do 502 ("sem chave", "HTTP 401",
+      // "a IA não devolveu JSON"). Engolir isso num console.error deixava a
+      // tela idêntica a "não aconteceu nada" — e o usuário sem saber se devia
+      // esperar, clicar de novo, ou configurar uma chave.
+      setErroRefino(err instanceof Error ? err.message : String(err));
+      setActiveTab('spec');
     } finally {
       setLoadingAction(false);
     }
@@ -1057,6 +1084,17 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
               <div className="text-[10px] text-[#8a93a8] uppercase font-semibold">Prompt Bruto Original</div>
               <p className="text-slate-200 mt-1 italic">{task.raw_prompt}</p>
             </div>
+            {erroRefino && (
+              <div className="p-3 rounded-lg border border-red-500/40 bg-red-500/10">
+                <div className="text-[10px] text-red-300 uppercase font-semibold">
+                  Não foi possível lapidar o prompt
+                </div>
+                <p className="text-red-200 mt-1">{erroRefino}</p>
+                <p className="text-[#8a93a8] mt-2 text-[11px]">
+                  A tarefa continua como rascunho — nenhuma especificação foi gravada.
+                </p>
+              </div>
+            )}
             {task.refined_spec ? (
               <div className="p-3 bg-[#090a0f] rounded-lg border border-purple-500/30">
                 <div className="text-slate-200">
