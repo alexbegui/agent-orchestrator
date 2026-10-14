@@ -719,8 +719,25 @@ class AssistantService:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            await proc.communicate()
-            return await self._wait_for_transcript_reply(conv_id, count_before)
+            stdout, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                logger.error(f"agentapi send-message falhou (rc={proc.returncode}): {stderr.decode('utf-8', errors='replace')}")
+
+            reply = await self._wait_for_transcript_reply(conv_id, count_before)
+            if not reply:
+                # Verifica se o agente ainda está ocupado gerando passos/código
+                if os.path.exists(transcript_path):
+                    try:
+                        with open(transcript_path, "r", encoding="utf-8") as f:
+                            current_lines = [json.loads(line) for line in f if line.strip()]
+                        if len(current_lines) > count_before:
+                            return (
+                                "⏳ **O agente Antigravity está processando sua solicitação e gerando código.**\n\n"
+                                "Ele continua executando em segundo plano. Clique no botão **🔄 Sincronizar** acima a qualquer momento para atualizar as respostas assim que ele concluir."
+                            )
+                    except Exception:
+                        pass
+            return reply
         else:
             # Cria nova conversa com contexto inicial da tarefa
             full_prompt = (

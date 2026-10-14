@@ -111,9 +111,11 @@ class RunnerService:
                     return [agentapi, "new-conversation", "--model=flash", prompt]
 
             # O `agy` é o CLI independente: não exige o IDE aberto nem token CSRF.
-            # Se o agy estiver instalado, usamos o CLI moderno independente com a sintaxe correta -p=<prompt>
-            if agy:
-                args = [agy, f"-p={prompt}", "--dangerously-skip-permissions"]
+            agy = self._agy_padrao()
+            # Se agy foi selecionado ou estiver instalado
+            if "agy" in cli_choice or agy:
+                cmd_bin = agy or "agy"
+                args = [cmd_bin, f"-p={prompt}", "--dangerously-skip-permissions"]
                 if conv_id:
                     args += ["--conversation", conv_id]
                 if cfg.get("model"):
