@@ -23,9 +23,18 @@ CHAT_CLI_TIMEOUT = 600.0
 # respondeu em 2 minutos, respondeu errado.
 REFINO_TIMEOUT = 120.0
 
-# O CLI é lento: medido em 13/10, o agy leva ~39s num refino e o claude ~4s.
-# O teto cobre o pior caso com folga sem prender a requisição para sempre.
-REFINO_CLI_TIMEOUT = 300.0
+# Teto POR CHAMADA do refino pelo CLI. O refino faz duas.
+#
+# Medido em 13/10/2026, refino real de ponta a ponta: o claude levou ~50s no
+# total e o agy ~371s. Com o teto anterior de 300s por chamada, uma única
+# chamada mais pesada que a medida — projeto maior que o de teste — derrubaria
+# o refino inteiro com "o CLI não respondeu".
+#
+# O teto existe para impedir que um CLI TRAVADO prenda a requisição para
+# sempre, não para cortar trabalho legítimo: por isso fica bem acima do pior
+# caso observado. A requisição é síncrona, então ele também é o tempo máximo
+# que o navegador espera — não dá para ser generoso sem limite.
+REFINO_CLI_TIMEOUT = 600.0
 
 
 # Abaixo do mínimo do modelo a marca de cache não cacheia nada e NÃO dá erro —
@@ -381,7 +390,9 @@ class AssistantService:
             except Exception:
                 pass
             raise MotorIndisponivel(
-                f"O CLI não respondeu em {int(REFINO_CLI_TIMEOUT)}s ao lapidar o prompt."
+                f"O CLI não respondeu em {int(REFINO_CLI_TIMEOUT / 60)} minutos ao "
+                "lapidar o prompt. Tente de novo, ou escolha outro motor para a "
+                "tarefa — o agy é bem mais lento que o Claude Code neste passo."
             )
 
         if proc.returncode != 0:

@@ -155,3 +155,35 @@ async def test_sem_cli_e_sem_chave_recusa_com_motivo_util(monkeypatch):
 
     texto = str(erro.value).lower()
     assert "cli" in texto or "chave" in texto
+
+
+# --- Teto de tempo -----------------------------------------------------------
+
+def test_teto_cobre_o_pior_refino_medido():
+    """
+    Medido em 13/10/2026 num refino real de ponta a ponta: o agy levou 371s no
+    TOTAL, entre as duas chamadas. O teto é POR CHAMADA, e estava em 300s — ou
+    seja, uma única chamada mais pesada derrubaria o refino num projeto maior
+    que o de teste.
+
+    O teto existe para impedir que um CLI travado prenda a requisição para
+    sempre, não para cortar trabalho legítimo. Ele precisa ficar acima do pior
+    caso observado com folga, e esta prova trava isso: quem baixar o número
+    sem medir de novo quebra aqui.
+    """
+    from app.services.assistant_service import REFINO_CLI_TIMEOUT
+
+    PIOR_REFINO_MEDIDO = 371.0
+    assert REFINO_CLI_TIMEOUT >= PIOR_REFINO_MEDIDO * 1.5
+
+
+def test_a_mensagem_de_estouro_diz_quanto_esperou():
+    """
+    "Não respondeu" sozinho manda o usuário adivinhar se foram 5 segundos ou 10
+    minutos — e se vale tentar de novo.
+    """
+    import inspect
+    from app.services.assistant_service import AssistantService
+
+    fonte = inspect.getsource(AssistantService._json_por_cli)
+    assert "REFINO_CLI_TIMEOUT" in fonte
