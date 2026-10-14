@@ -86,6 +86,20 @@ def test_api_create_project_and_task(client, tmp_path, monkeypatch):
     assert "## Objetivo" in refined_data["refined_spec"]
 
     # 5. Send message in isolated thread
+    #
+    # O assistente é dublê aqui. Sem isso, este passo chamava os CLIs de
+    # verdade e esperava cada um estourar o próprio timeout: 104 dos 106
+    # segundos da suíte inteira saíam DESTE teste. E ele não existe para
+    # provar que a IA responde — existe para provar que a mensagem é
+    # persistida e devolvida na thread certa. Quem cobre a cascata de motores
+    # é test_chat_cli_routing.py, e o teto de tempo é test_chat_busy.py.
+    async def resposta_instantanea(*args, **kwargs):
+        return "Entendido."
+
+    monkeypatch.setattr(
+        rotas_tarefas.assistant_service, "generate_chat_reply", resposta_instantanea
+    )
+
     resp = client.post(f"/api/tasks/{task_id}/messages", json={
         "content": "Use tokens com validade de 24 horas"
     })
@@ -96,7 +110,13 @@ def test_api_create_project_and_task(client, tmp_path, monkeypatch):
     assert resp.status_code == 200
     messages = resp.json()
     assert len(messages) >= 1
-    assert "24 horas" in messages[-1]["content"]
+    # A mensagem do usuário tem de estar na thread — não necessariamente por
+    # último. Antes a asserção olhava só `messages[-1]`, e passava porque o
+    # assistente real demorava tanto que sua resposta não chegava a tempo;
+    # com o dublê respondendo na hora, ela aparece depois e o `-1` deixou de
+    # ser a do usuário. O que o teste quer provar é a persistência na thread
+    # certa, não a ordem.
+    assert any("24 horas" in m["content"] for m in messages), messages
 
 
 def test_api_update_project(client, tmp_path):
