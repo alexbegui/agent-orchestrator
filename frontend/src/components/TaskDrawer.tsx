@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { useTaskWebSocket } from '../hooks/useTaskWebSocket';
 import { DiffViewer } from './DiffViewer';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { tempoDeRefino } from './tempoDeRefino';
 import { QuestionNavigator } from './QuestionNavigator';
 import {
   X,
@@ -534,13 +535,13 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
               {lapidando ? 'Lapidando…' : 'Lapidar Prompt'}
             </button>
           )}
-          {/* O refino pelo CLI leva ~50s (contra ~4s pela API direta). Sem
-              dizer isso, a espera é indistinguível de travamento: o usuário
-              clica de novo ou fecha a tarefa. O número é o que transforma
-              espera em expectativa — mais do que qualquer animação. */}
+          {/* Sem dizer quanto demora, a espera é indistinguível de
+              travamento: o usuário clica de novo ou fecha a tarefa. E o tempo
+              depende do motor — medido: claude ~50s, agy ~371s. Ver
+              tempoDeRefino. */}
           {lapidando && (
             <span className="text-[10.5px] text-purple-300/80">
-              a IA está lendo o projeto — costuma levar cerca de um minuto
+              {tempoDeRefino(task.runner_config)}
             </span>
           )}
           {task.status === 'SPEC_READY' && (

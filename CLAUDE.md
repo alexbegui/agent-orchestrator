@@ -11,7 +11,7 @@ revisa o diff antes de aprovar o merge.
 WebSocket para tempo real. Fortemente orientado a **Windows**.
 
 **Estrutura**: `backend/app/{api,services,core,models,websockets}` · `frontend/src/{components,hooks,services,types}` ·
-`backend/tests/` (270 testes) · `frontend/src/**/*.test.tsx` (vitest, 12 testes) · `docs/{specs,plans,mockups}`.
+`backend/tests/` (270 testes) · `frontend/src/**/*.test.tsx` (vitest, 17 testes) · `docs/{specs,plans,mockups}`.
 
 Para a arquitetura detalhada, veja [docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md).
 
