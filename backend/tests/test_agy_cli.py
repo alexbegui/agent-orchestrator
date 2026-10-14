@@ -23,8 +23,9 @@ def test_prefere_agy_quando_disponivel():
     with patch("shutil.which", side_effect=_which_so_agy):
         cmd = runner.resolve_cli_command("SUBPROCESS_CLI", "faça X", {"cli": "agy"})
     assert "agy.exe" in cmd[0]
-    assert "-p" in cmd
-    assert "faça X" in cmd
+    # O prompt vai ANEXADO à flag: solto logo depois de -p, o agy o confundia
+    # com a própria flag de permissão e descartava a tarefa.
+    assert "-p=faça X" in cmd
 
 
 def test_agy_recebe_skip_permissions():
@@ -66,7 +67,7 @@ async def test_chat_usa_agy_e_retoma_a_conversa():
         class _Proc:
             returncode = 0
 
-            async def communicate(self):
+            async def communicate(self, input=None):
                 return (b"resposta do agy", b"")
 
         return _Proc()

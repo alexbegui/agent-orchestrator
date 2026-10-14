@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { useTaskWebSocket } from '../hooks/useTaskWebSocket';
 import { DiffViewer } from './DiffViewer';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { tempoDeRefino } from './tempoDeRefino';
 import { QuestionNavigator } from './QuestionNavigator';
 import {
   X,
@@ -49,6 +50,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
       modified_at: number;
       path: string;
       outside_task?: boolean;
+      rel_path?: string | null;
     }[]
   >([]);
   const [openArtifact, setOpenArtifact] = useState<{ name: string; content: string } | null>(null);
@@ -60,6 +62,13 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
   const [inputMsg, setInputMsg] = useState('');
   const [diffText, setDiffText] = useState('');
   const [loadingAction, setLoadingAction] = useState(false);
+  const [erroRefino, setErroRefino] = useState<string | null>(null);
+  // Separado de `loadingAction`: só o refino é lento o bastante para precisar
+  // avisar, e o aviso não pode aparecer ao despachar ou parar o agente.
+  const [lapidando, setLapidando] = useState(false);
+  const [walkthrough, setWalkthrough] = useState<
+    { conteudo: string; truncado: boolean; fora_da_pasta: boolean } | null
+  >(null);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -89,18 +98,36 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     el.style.height = `${Math.min(el.scrollHeight, MAX_ALTURA_INPUT)}px`;
   }, [inputMsg]);
 
+  // Descarta o que não é desta tarefa. O canal já é por task_id, então isto é
+  // defesa em profundidade: uma mensagem que chegue por um socket antigo,
+  // durante a troca de tarefa, apareceria no chat errado.
   const handleNewMessage = useCallback((incoming: Message) => {
+    if (incoming.task_id && incoming.task_id !== task.id) return;
     setMessages((prev) => {
       if (prev.some((m) => m.id === incoming.id)) return prev;
       return [...prev, incoming];
     });
-  }, []);
+  }, [task.id]);
 
   const { logs, taskStatus } = useTaskWebSocket(task.id, handleNewMessage);
 
-  // Carrega histórico de mensagens
+  // Carrega histórico de mensagens.
+  //
+  // Zera ANTES de buscar: sem isso, as mensagens da tarefa anterior seguiam na
+  // tela durante toda a ida à rede, e o usuário via a resposta de uma tarefa no
+  // chat de outra. O `cancelado` descarta resposta que chega depois de o
+  // usuário já ter trocado de tarefa — ela encheria o chat errado.
   useEffect(() => {
-    api.getMessages(task.id).then(setMessages).catch(console.error);
+    let cancelado = false;
+    setMessages([]);
+    api.getMessages(task.id)
+      .then((msgs) => {
+        if (!cancelado) setMessages(msgs);
+      })
+      .catch(console.error);
+    return () => {
+      cancelado = true;
+    };
   }, [task.id]);
 
   // Rola suavemente para a última mensagem ao enviar ou receber nova
@@ -115,15 +142,25 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     setOpenArtifact(null);
     api
       .getTaskArtifacts(task.id)
-      .then((res) => setArtifacts(res.artifacts))
+      .then((res) => {
+        setArtifacts(res.artifacts);
+        // `undefined` distingue "ainda não buscamos" de "buscamos e o agente
+        // não escreveu" (`null`) — a tela diz coisas diferentes nos dois casos.
+        setWalkthrough(res.walkthrough ?? null);
+      })
       .catch(console.error)
       .finally(() => setLoadingArtifacts(false));
   }, [task.id]);
 
   // Carrega ao abrir a aba. O agente pode criar arquivo a qualquer momento,
   // por isso o botão de recarregar logo abaixo.
+  //
+  // A aba de revisão também busca: o sumário de entrega vem nesta mesma
+  // resposta, e é lido ANTES do diff. Carregar só em "Artefatos" faria o
+  // sumário nunca aparecer para quem vai direto revisar — que é o caminho
+  // normal quando o card avisa "Entregou".
   useEffect(() => {
-    if (activeTab !== 'artifacts') return;
+    if (activeTab !== 'artifacts' && activeTab !== 'diff') return;
     carregarArtefatos();
   }, [activeTab, carregarArtefatos]);
 
@@ -300,14 +337,26 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
   const handleRefinePrompt = async () => {
     setLoadingAction(true);
+    setLapidando(true);
+    // Limpa o erro da tentativa anterior ANTES de tentar: deixá-lo na tela
+    // enquanto a nova chamada roda faz a tentativa em curso parecer uma falha.
+    setErroRefino(null);
     try {
       const updated = await api.refineTask(task.id);
       onTaskUpdated(updated);
       setActiveTab('spec');
     } catch (err) {
-      console.error(err);
+      // O backend manda o motivo real no corpo do 502 ("sem chave", "HTTP 401",
+      // "a IA não devolveu JSON"). Engolir isso num console.error deixava a
+      // tela idêntica a "não aconteceu nada" — e o usuário sem saber se devia
+      // esperar, clicar de novo, ou configurar uma chave.
+      setErroRefino(err instanceof Error ? err.message : String(err));
+      setActiveTab('spec');
     } finally {
       setLoadingAction(false);
+      // No `finally` para sumir também quando falha: deixar "Lapidando…" na
+      // tela ao lado da mensagem de erro seria mentir duas vezes.
+      setLapidando(false);
     }
   };
 
@@ -482,8 +531,18 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
               disabled={loadingAction}
               className="bg-purple-600 hover:bg-purple-500 text-white text-[11px] px-2.5 py-1 rounded flex items-center gap-1 font-medium"
             >
-              <Sparkles size={11} /> Lapidar Prompt
+              <Sparkles size={11} className={lapidando ? 'animate-pulse' : undefined} />
+              {lapidando ? 'Lapidando…' : 'Lapidar Prompt'}
             </button>
+          )}
+          {/* Sem dizer quanto demora, a espera é indistinguível de
+              travamento: o usuário clica de novo ou fecha a tarefa. E o tempo
+              depende do motor — medido: claude ~50s, agy ~371s. Ver
+              tempoDeRefino. */}
+          {lapidando && (
+            <span className="text-[10.5px] text-purple-300/80">
+              {tempoDeRefino(task.runner_config)}
+            </span>
           )}
           {task.status === 'SPEC_READY' && (
             <button
@@ -850,7 +909,11 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
                     {doGrupo.map((a) => {
                       const aberto = openArtifact?.name === a.name;
-                      const url = api.artifactUrl(task.id, a.name);
+                      // `name` é o rótulo curto; `rel_path` é o endereço real,
+                      // a partir da raiz do projeto. Ler pelo nome achava o
+                      // arquivo só quando ele estava na pasta da tarefa.
+                      const chave = a.rel_path || a.name;
+                      const url = api.artifactUrl(task.id, chave);
                       const textual = a.kind === 'markdown' || a.kind === 'mermaid';
                       const visualizavel = textual || a.category === 'imagem' || a.category === 'mockup';
                       return (
@@ -894,7 +957,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                                     if (aberto) return setOpenArtifact(null);
                                     if (textual) {
                                       try {
-                                        setOpenArtifact(await api.readTaskArtifact(task.id, a.name));
+                                        const lido = await api.readTaskArtifact(task.id, chave);
+                                        setOpenArtifact({ name: a.name, content: lido.content });
                                       } catch (err: any) {
                                         alert(`⚠️ ${err.message || 'Falha ao ler o artefato'}`);
                                       }
@@ -950,6 +1014,37 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
         {activeTab === 'diff' && (
           <div className="space-y-4">
+            {/* O sumário vem ANTES do diff porque é o que se lê antes dele.
+                Três linhas aqui mudam a economia de revisar 500 linhas ali. */}
+            {walkthrough ? (
+              <div className="p-3.5 rounded-lg bg-emerald-500/5 border border-emerald-500/30">
+                <div className="text-xs font-bold text-emerald-200 mb-2">
+                  O agente resumiu a entrega
+                </div>
+                {walkthrough.fora_da_pasta && (
+                  <p className="text-[10.5px] text-amber-300/80 mb-2">
+                    Salvo fora da pasta desta tarefa — achamos assim mesmo.
+                  </p>
+                )}
+                <div className="text-slate-200 text-xs">
+                  <MarkdownRenderer content={walkthrough.conteudo} />
+                </div>
+                {walkthrough.truncado && (
+                  <p className="text-[10.5px] text-[#8a93a8] mt-2">
+                    Sumário longo demais — mostrando só o começo.
+                  </p>
+                )}
+              </div>
+            ) : (
+              /* Dizer que não houve é diferente de não mostrar nada: aba vazia
+                 é indistinguível de falha ao carregar, e o usuário conclui que
+                 o sumário sumiu em vez de que não existe. */
+              <div className="p-3 rounded-lg border border-dashed border-[#262a3b] text-[11px] text-[#8a93a8]">
+                O agente não deixou um sumário de entrega. Leia o diff abaixo —
+                e, se quiser, peça o resumo pelo chat da tarefa.
+              </div>
+            )}
+
             {proposals.length > 0 && (
               <div className="p-3.5 rounded-lg bg-fuchsia-500/5 border border-fuchsia-500/30">
                 <div className="text-xs font-bold text-fuchsia-200 mb-1">
@@ -1051,6 +1146,17 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
               <div className="text-[10px] text-[#8a93a8] uppercase font-semibold">Prompt Bruto Original</div>
               <p className="text-slate-200 mt-1 italic">{task.raw_prompt}</p>
             </div>
+            {erroRefino && (
+              <div className="p-3 rounded-lg border border-red-500/40 bg-red-500/10">
+                <div className="text-[10px] text-red-300 uppercase font-semibold">
+                  Não foi possível lapidar o prompt
+                </div>
+                <p className="text-red-200 mt-1">{erroRefino}</p>
+                <p className="text-[#8a93a8] mt-2 text-[11px]">
+                  A tarefa continua como rascunho — nenhuma especificação foi gravada.
+                </p>
+              </div>
+            )}
             {task.refined_spec ? (
               <div className="p-3 bg-[#090a0f] rounded-lg border border-purple-500/30">
                 <div className="text-slate-200">

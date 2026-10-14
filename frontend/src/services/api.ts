@@ -78,7 +78,18 @@ export const api = {
       modified_at: number;
       path: string;
       outside_task?: boolean;
+      /** Caminho a partir da raiz do projeto — é por ele que a leitura acha
+       *  o arquivo. `name` é só o rótulo curto mostrado na tela. */
+      rel_path?: string | null;
     }[];
+    /** Sumário que o agente escreveu ao terminar. `null` quando ele não
+     *  escreveu — nunca é montado a partir do diff. */
+    walkthrough: {
+      conteudo: string;
+      truncado: boolean;
+      /** O agente salvou fora da pasta da tarefa; achamos assim mesmo. */
+      fora_da_pasta: boolean;
+    } | null;
   }> {
     const res = await fetch(`${BASE_URL}/tasks/${taskId}/artifacts`);
     return handleResponse(res);
@@ -100,13 +111,23 @@ export const api = {
     return handleResponse(res);
   },
 
+  /**
+   * O artefato mora em subpasta (`docs/mapa.md`), então as barras precisam
+   * chegar ao servidor como barras — é o que o conversor `{nome:path}` casa.
+   * Codificar o caminho inteiro transformaria `/` em `%2F`; codificamos
+   * segmento a segmento, o que ainda protege espaço, `#` e `?`.
+   */
+  artifactPath(nome: string): string {
+    return nome.split('/').map(encodeURIComponent).join('/');
+  },
+
   /** URL servida pelo backend — o navegador bloqueia file:// vindo de http. */
   artifactUrl(taskId: string, nome: string): string {
-    return `${BASE_URL}/tasks/${taskId}/artifacts/${encodeURIComponent(nome)}/raw`;
+    return `${BASE_URL}/tasks/${taskId}/artifacts/${this.artifactPath(nome)}/raw`;
   },
 
   async readTaskArtifact(taskId: string, nome: string): Promise<{ name: string; content: string }> {
-    const res = await fetch(`${BASE_URL}/tasks/${taskId}/artifacts/${encodeURIComponent(nome)}`);
+    const res = await fetch(`${BASE_URL}/tasks/${taskId}/artifacts/${this.artifactPath(nome)}`);
     return handleResponse(res);
   },
 

@@ -18,7 +18,7 @@ def _fake_exec_capturando(capturados):
         class _Proc:
             returncode = 0
 
-            async def communicate(self):
+            async def communicate(self, input=None):
                 return (b"ok", b"")
 
         return _Proc()

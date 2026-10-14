@@ -15,14 +15,15 @@ from app.models.task import Task, TaskStatus, RunnerType
 from app.models.message import Message, MessageRole
 from app.services.git_service import GitWorktreeService
 from app.services.runner_service import RunnerService
-from app.services.refiner_service import PromptRefinerService
-from app.services.assistant_service import assistant_service
+from app.services.refiner_service import PromptRefinerService, RespostaInvalida
+from app.services.assistant_service import assistant_service, MotorIndisponivel
 from app.services.terminal_service import terminal_service
 from app.services.run_registry import run_registry
 from app.services.artifact_service import artifact_service
 from app.services.skills_service import skills_service
 from app.services.queue_service import queue_service
 from app.services.jev_service import jev_service, TriageResult, GuardrailResult
+from app.services import prompt_service
 from app.websockets.manager import ws_manager
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -494,20 +495,72 @@ def list_task_artifacts(task_id: str, db: Session = Depends(get_db)):
 
     # Procura além da pasta da tarefa: o agente navega durante o trabalho e
     # nem sempre salva onde devia. O que vier de fora é marcado.
+    #
+    # `base` é a raiz do projeto para TODOS os itens, inclusive os do worktree
+    # (que fica em `<projeto>/.worktrees/task-<id>`). É a mesma base que a
+    # leitura usa — declarar uma e ler de outra era o que dava 404.
     return {
-        "base": wt or raiz,
+        "base": raiz or wt,
         "artifacts": artifact_service.listar_amplo(wt, raiz or wt),
+        # O sumário de entrega sai separado dos demais artefatos de propósito:
+        # ele é o que o revisor lê ANTES do diff, não mais um item de galeria.
+        # None quando o agente não escreveu — a tela diz isso, em vez de
+        # montar um sumário a partir do diff e fingir que veio dele.
+        "walkthrough": artifact_service.achar_walkthrough(wt),
     }
 
 
-@router.get("/{task_id}/artifacts/{nome}")
+def _base_dos_artefatos(task: Task) -> Optional[str]:
+    """
+    A raiz do projeto, que é ancestral do worktree e das outras worktrees.
+
+    Uma base só para listar e ler: `rel_path` é sempre relativo a ela. Sem
+    projeto (não deve acontecer), cai no worktree para não perder o acesso.
+    """
+    raiz = task.project.root_path if task.project else None
+    if raiz and os.path.isdir(raiz):
+        return raiz
+    return task.worktree_path if (task.worktree_path and os.path.isdir(task.worktree_path)) else None
+
+
+# `{nome:path}` porque o artefato mora em subpasta: `docs/mapa.md`, e os de
+# fora da tarefa em `.worktrees/outra/docs/mapa.md`. Sem o conversor o próprio
+# roteador recusava a URL ("Not Found") e a requisição nem chegava aqui.
+# O conversor é guloso, então esta rota precisa vir ANTES da sem `/raw`.
+@router.get("/{task_id}/artifacts/{nome:path}/raw")
+def serve_task_artifact(task_id: str, nome: str, db: Session = Depends(get_db)):
+    """
+    Serve o artefato pelo próprio servidor.
+
+    O navegador bloqueia links `file://` vindos de uma página http — por isso
+    não dava para abrir um mockup ou um mapa mental sem ir na pasta à mão.
+    Servindo daqui, com o content-type certo, ele abre normalmente.
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    base = _base_dos_artefatos(task)
+    if not base:
+        raise HTTPException(status_code=404, detail="Artefato não encontrado")
+
+    try:
+        dados = artifact_service.ler_bytes(base, nome)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if dados is None:
+        raise HTTPException(status_code=404, detail="Artefato não encontrado")
+
+    return Response(content=dados, media_type=artifact_service.content_type(nome))
+
+
+@router.get("/{task_id}/artifacts/{nome:path}")
 def read_task_artifact(task_id: str, nome: str, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
-    base = task.worktree_path if (task.worktree_path and os.path.isdir(task.worktree_path)) \
-        else (task.project.root_path if task.project else None)
+    base = _base_dos_artefatos(task)
     if not base:
         raise HTTPException(status_code=404, detail="Artefato não encontrado")
 
@@ -554,34 +607,6 @@ def approve_knowledge_proposals(
         artifact_service.limpar_propostas(task.worktree_path)
 
     return {"registered": len(data.lines)}
-
-
-@router.get("/{task_id}/artifacts/{nome}/raw")
-def serve_task_artifact(task_id: str, nome: str, db: Session = Depends(get_db)):
-    """
-    Serve o artefato pelo próprio servidor.
-
-    O navegador bloqueia links `file://` vindos de uma página http — por isso
-    não dava para abrir um mockup ou um mapa mental sem ir na pasta à mão.
-    Servindo daqui, com o content-type certo, ele abre normalmente.
-    """
-    task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
-
-    base = task.worktree_path if (task.worktree_path and os.path.isdir(task.worktree_path)) \
-        else (task.project.root_path if task.project else None)
-    if not base:
-        raise HTTPException(status_code=404, detail="Artefato não encontrado")
-
-    try:
-        dados = artifact_service.ler_bytes(base, nome)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    if dados is None:
-        raise HTTPException(status_code=404, detail="Artefato não encontrado")
-
-    return Response(content=dados, media_type=artifact_service.content_type(nome))
 
 
 @router.post("/{task_id}/terminal")
@@ -713,22 +738,49 @@ def create_task(data: TaskCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/{task_id}/refine", response_model=TaskResponse)
-def refine_task(task_id: str, db: Session = Depends(get_db)):
+async def refine_task(task_id: str, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
-    # Mapeia arquivos existentes no projeto para context pruning
-    available_files = []
-    if os.path.exists(task.project.root_path):
-        for root, _, files in os.walk(task.project.root_path):
-            if ".git" in root or "node_modules" in root or ".worktrees" in root:
-                continue
-            for f in files:
-                rel = os.path.relpath(os.path.join(root, f), task.project.root_path)
-                available_files.append(rel.replace("\\", "/"))
+    raiz = task.project.root_path
 
-    spec = refiner_service.refine(task.raw_prompt, available_files=available_files)
+    # A árvore vem do git, não de os.walk. O walk antigo só pulava .git,
+    # node_modules e .worktrees: neste repositório devolvia 4.077 arquivos
+    # (~72 mil tokens), 3.786 deles dentro da venv. `git ls-files` devolve 99.
+    arvore = git_service.listar_versionados(raiz)
+    if not arvore:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Não foi possível listar os arquivos do projeto. Confirme que "
+                f"'{raiz}' existe e é um repositório git."
+            ),
+        )
+
+    def ler(rel: str) -> str:
+        caminho = os.path.join(raiz, rel.replace("/", os.sep))
+        with open(caminho, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+
+    try:
+        spec = await refiner_service.refinar(
+            task.raw_prompt,
+            arvore=arvore,
+            ler=ler,
+            recentes=git_service.arquivos_recentes(raiz),
+            conhecimento=artifact_service.contexto_para_prompt(raiz),
+            # Quem refina é o motor que VAI EXECUTAR a tarefa: a ordem de
+            # serviço sai na linguagem de quem vai cumpri-la, e roda na
+            # assinatura que o usuário já paga, sem exigir chave de API.
+            runner_config=task.runner_config,
+        )
+    except (MotorIndisponivel, RespostaInvalida) as e:
+        # A tarefa NÃO avança. Antes a rota não tinha como falhar (o regex
+        # sempre produzia algo), e marcar SPEC_READY aqui faria o usuário
+        # aprovar uma spec que não veio da IA sem saber disso.
+        raise HTTPException(status_code=502, detail=str(e))
+
     task.refined_spec = refiner_service.to_markdown(spec)
     task.status = TaskStatus.SPEC_READY
     db.commit()
@@ -768,7 +820,7 @@ def verify_task_diff(task_id: str, db: Session = Depends(get_db)):
     return jev_service.verify_diff(diff)
 
 
-async def _run_task_background(task_id: str, project_path: str, command: list[str], db_session_factory, is_assistant: bool = False, prompt: str = ""):
+async def _run_task_background(task_id: str, project_path: str, command: list[str], db_session_factory, is_assistant: bool = False, prompt: str = "", prompt_por_stdin: bool = False):
     worktree_path = git_service.get_worktree_path(project_path, task_id)
     conv_id = None
     try:
@@ -792,18 +844,29 @@ async def _run_task_background(task_id: str, project_path: str, command: list[st
             title = t_obj.title if t_obj else "Tarefa"
             db_tmp.close()
 
-            await assistant_service.execute_task_direct(
+            entregou = await assistant_service.execute_task_direct(
                 task_id=task_id,
                 task_title=title,
                 prompt=prompt,
                 worktree_path=worktree_path,
                 log_callback=log_cb
             )
-            final_status = TaskStatus.REVIEW_READY
+            # O retorno É a resposta. Antes ele era descartado e a tarefa virava
+            # REVIEW_READY sempre — então "💬 Só conversar", que não escreve
+            # código e devolve False, terminava com o card em "Entregou ·
+            # revisar" e um diff vazio. Mesmo critério do caminho de CLI logo
+            # abaixo, onde entrega é `rc == 0`.
+            final_status = TaskStatus.REVIEW_READY if entregou else TaskStatus.FAILED
         else:
             # Desacoplado: o agente sobrevive a reinícios do servidor e só para
             # quando o usuário mandar (ver artefato agentes-sobrevivem-ao-servidor).
-            pid = runner_service.launch_detached(task_id, command, cwd=worktree_path)
+            pid = runner_service.launch_detached(
+                task_id, command, cwd=worktree_path,
+                # O Claude Code recebe o prompt por aqui, não pelo argv: o
+                # claude.cmd é batch e o cmd.exe corta na primeira quebra de
+                # linha (ver runner_service.prompt_por_stdin).
+                prompt_stdin=prompt if prompt_por_stdin else None,
+            )
             if pid:
                 await ws_manager.broadcast_task(task_id, {
                     "type": "LOG",
@@ -949,27 +1012,31 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
         )
         return task
 
-    prompt = task.refined_spec or task.raw_prompt
+    pedido = task.refined_spec or task.raw_prompt
 
     # Injeta resumo compacto de skills disponíveis via Progressive Disclosure
     skills_list = skills_service.list_skills(task.project.root_path)
-    if skills_list:
-        summary_skills = skills_service.format_summary(skills_list)
-        prompt = f"{summary_skills}\n\n---\n\n{prompt}"
+    skills_summary = skills_service.format_summary(skills_list) if skills_list else None
 
-    # Cola o índice de conhecimento do projeto no começo do prompt. Vale para
-    # qualquer CLI — não depende do que cada um lê sozinho. Só o índice entra;
-    # os artefatos o agente abre sob demanda.
-    contexto = artifact_service.contexto_para_prompt(task.project.root_path)
-    if contexto:
-        prompt = f"{contexto}\n---\n\n{prompt}"
+    # ORDEM: o que não muda vem primeiro, o pedido da tarefa por último.
+    # O prefixo se repete entre tarefas para aproveitar o prompt caching.
+    blocos = [
+        prompt_service.regras_de_trabalho(),
+        skills_summary,
+        prompt_service.memoria_do_projeto(task.project.root_path, task.runner_config),
+        artifact_service.contexto_para_prompt(task.project.root_path),
+    ]
+    prefixo = "\n".join(b for b in blocos if b)
+    prompt = f"{prefixo}\n---\n\n{pedido}" if prefixo else pedido
 
     # Convida o agente a registrar o que aprendeu — com o padrão em "nada".
     prompt = f"{prompt}\n\n---\n{artifact_service.instrucao_de_conhecimento()}"
     # E diz onde ele deve salvar o que produzir, já que ele navega.
-    prompt += artifact_service.instrucao_de_local(
-        git_service.get_worktree_path(task.project.root_path, task.id)
-    )
+    worktree_desta_tarefa = git_service.get_worktree_path(task.project.root_path, task.id)
+    prompt += artifact_service.instrucao_de_local(worktree_desta_tarefa)
+    # Pede o sumário de entrega. Quem escreve é ele: o orquestrador não tem
+    # como gerar a partir do diff o que o agente TENTOU e falhou.
+    prompt += prompt_service.instrucao_de_entrega(worktree_desta_tarefa)
 
     is_assistant = (
         task.runner_type == RunnerType.DIRECT_API
@@ -989,6 +1056,15 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
             task.runner_config = cfg
         cmd = runner_service.resolve_cli_command(task.runner_type.value, prompt, cfg)
 
+        # A sessão passa a existir no momento em que o claude é disparado. Sem
+        # registrar isso, o ▶ Rodar seguinte mandaria --session-id com o mesmo
+        # id e o CLI recusaria ("Session ID ... is already in use"), matando a
+        # tarefa em menos de um segundo. Marcamos pelo comando de fato montado,
+        # não pela configuração, para não mentir quando não houve sessão.
+        if "--session-id" in cmd and not cfg.get("claude_session_started"):
+            cfg["claude_session_started"] = True
+            task.runner_config = dict(cfg)
+
     task.status = TaskStatus.RUNNING
     task.worktree_path = git_service.get_worktree_path(task.project.root_path, task.id)
     task.git_branch = f"task/{task.id}"
@@ -1003,7 +1079,8 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
         cmd,
         SessionLocal,
         is_assistant,
-        prompt
+        prompt,
+        runner_service.prompt_por_stdin(task.runner_config),
     )
     return task
 

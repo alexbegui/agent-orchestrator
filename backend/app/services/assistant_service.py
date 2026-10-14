@@ -12,6 +12,183 @@ from app.models.message import Message, MessageRole
 
 logger = logging.getLogger("orchestrator.assistant")
 
+# Teto para uma resposta do CLI no chat. Sem ele, `communicate()` esperava para
+# sempre: um CLI que não retorna deixava a marca `chat_busy_since` presa, e o
+# usuário ficava até 15 minutos (CHAT_BUSY_TIMEOUT) sem conseguir perguntar
+# nada — o sintoma "fica só processando". Estourado o teto, o processo é morto
+# e a cascata tenta o próximo motor, em vez de o chat emudecer.
+CHAT_CLI_TIMEOUT = 600.0
+
+# Refino é uma chamada curta que precisa voltar JSON. Não é conversa: se não
+# respondeu em 2 minutos, respondeu errado.
+REFINO_TIMEOUT = 120.0
+
+# Teto POR CHAMADA do refino pelo CLI. O refino faz duas.
+#
+# Medido em 13/10/2026, refino real de ponta a ponta: o claude levou ~50s no
+# total e o agy ~371s. Com o teto anterior de 300s por chamada, uma única
+# chamada mais pesada que a medida — projeto maior que o de teste — derrubaria
+# o refino inteiro com "o CLI não respondeu".
+#
+# O teto existe para impedir que um CLI TRAVADO prenda a requisição para
+# sempre, não para cortar trabalho legítimo: por isso fica bem acima do pior
+# caso observado. A requisição é síncrona, então ele também é o tempo máximo
+# que o navegador espera — não dá para ser generoso sem limite.
+REFINO_CLI_TIMEOUT = 600.0
+
+
+# Abaixo do mínimo do modelo a marca de cache não cacheia nada e NÃO dá erro —
+# fica `cache_creation_input_tokens: 0` em silêncio. No Opus 5.5 o mínimo é 512
+# tokens; a ~4 caracteres por token, 2048 caracteres. Marcamos com folga para
+# não gastar escrita de cache (1,25x) num prefixo que nunca vai ser lido.
+MIN_CHARS_PARA_CACHE = 2400
+
+
+def montar_blocos_cacheaveis(prefixo: str, pedido: str) -> List[Dict[str, Any]]:
+    """
+    Separa o prompt em "o que não muda" e "o que muda", nessa ordem.
+
+    Caching é casamento de PREFIXO: um byte diferente no começo invalida tudo
+    depois. Então a economia não vem de ligar uma opção, vem da ordem — o que
+    repete entre refinos do mesmo projeto (instruções, conhecimento, árvore de
+    arquivos) vem primeiro e leva a marca; o pedido do usuário, que muda a cada
+    tarefa, vem depois e fica de fora.
+
+    A ordem inversa não dá erro nenhum: só nunca acerta o cache.
+    """
+    if not prefixo:
+        return [{"type": "text", "text": pedido}]
+
+    bloco = {"type": "text", "text": prefixo}
+    if len(prefixo) >= MIN_CHARS_PARA_CACHE:
+        bloco["cache_control"] = {"type": "ephemeral"}
+    return [bloco, {"type": "text", "text": pedido}]
+
+
+class MotorIndisponivel(Exception):
+    """
+    Nenhum motor de IA real respondeu.
+
+    Existe para que a falha seja alta e visível. A versão antiga do refino era
+    regex e nunca falhava — sempre saía uma spec, de aparência igual à de uma
+    spec de verdade. Aprovar aquilo achando que veio da IA é pior que ficar
+    sem spec, então aqui a ausência de motor é erro, nunca um fallback.
+    """
+
+
+def montar_comando_json(
+    runner_config: Optional[Dict[str, Any]],
+    prompt: str,
+    prefixo: str,
+    esquema: Dict[str, Any],
+    caminho_agy: Optional[str],
+    caminho_claude: Optional[str],
+) -> tuple:
+    """
+    Monta a chamada de refino pelo CLI da própria tarefa, ou (None, None).
+
+    Devolve `(comando, texto_para_stdin)`. O CLI que refina é o mesmo que vai
+    executar a tarefa: a ordem de serviço sai na linguagem de quem vai cumpri-la.
+
+    `--json-schema` OBRIGA a resposta ao formato — verificado nos dois binários
+    em 13/10/2026. É mais forte que o caminho de API como está implementado,
+    onde pedimos JSON no texto e validamos depois. Os dois exigem
+    `--output-format json` junto ("--json-schema can only be used when
+    --output-format is 'json' or 'stream-json'").
+
+    O esquema vai serializado em UMA linha: ele é argumento de linha de
+    comando, e para o claude.cmd uma quebra de linha ali cortaria o argumento
+    — o mesmo defeito que tirou o prompt do argv.
+    """
+    escolha = str((runner_config or {}).get("cli", "")).lower()
+    texto = f"{prefixo}\n\n{prompt}".strip() if prefixo else prompt
+    esquema_str = json.dumps(esquema, ensure_ascii=False, separators=(",", ":"))
+
+    if "claude" in escolha:
+        if not caminho_claude:
+            return None, None
+        cmd = [
+            caminho_claude, "-p",
+            "--permission-mode", "bypassPermissions",
+            "--json-schema", esquema_str,
+            "--output-format", "json",
+        ]
+        # Pela entrada padrão: claude.cmd é batch e o cmd.exe corta o argumento
+        # na primeira quebra de linha — o prompt de refino tem dezenas.
+        return cmd, texto
+
+    if any(k in escolha for k in ("agy", "gemini", "antigravity")):
+        if not caminho_agy:
+            return None, None
+        # O agy toma o argumento SEGUINTE a -p como prompt; com a flag logo
+        # depois ele respondia à flag e descartava a tarefa. A forma correta,
+        # indicada pelo próprio CLI, é -p=<prompt>.
+        cmd = [
+            caminho_agy, f"-p={texto}",
+            "--json-schema", esquema_str,
+            "--output-format", "json",
+            "--dangerously-skip-permissions",
+        ]
+        return cmd, None
+
+    return None, None
+
+
+def extrair_structured_output(saida: str) -> str:
+    """
+    Tira o objeto do envelope que os CLIs devolvem em --output-format json.
+
+    Os dois usam o MESMO nome de campo, `structured_output` — conferido nos
+    binários reais. O `response`/`result` ao lado traz o mesmo conteúdo em
+    texto, às vezes com sujeira do próprio CLI (o agy anexa `toolAction` e
+    `toolSummary`); por isso lemos o campo estruturado, não o texto.
+
+    Sem o campo, o CLI não obedeceu ao esquema. Cair para o texto solto seria
+    aceitar prosa como spec — exatamente o defeito do regex que este caminho
+    veio substituir.
+    """
+    bruto = (saida or "").strip()
+    if not bruto:
+        raise MotorIndisponivel("O CLI não devolveu nada.")
+    try:
+        envelope = json.loads(bruto)
+    except (json.JSONDecodeError, ValueError):
+        raise MotorIndisponivel(f"O CLI não devolveu JSON. Começo: {bruto[:200]!r}")
+
+    estruturado = envelope.get("structured_output") if isinstance(envelope, dict) else None
+    if estruturado is None:
+        raise MotorIndisponivel(
+            "O CLI respondeu sem obedecer ao esquema (sem `structured_output`)."
+        )
+    return json.dumps(estruturado, ensure_ascii=False)
+
+
+async def _comunicar_com_teto(proc, rotulo: str, entrada: Optional[str] = None):
+    """
+    Espera a saída do processo, mas desiste no teto e mata a árvore.
+
+    Devolve (stdout, stderr) ou None quando estourou — quem chama trata o None
+    como "este motor não respondeu" e cai para o próximo.
+
+    `entrada` vai pela entrada padrão, em UTF-8. É por onde o texto do chat
+    viaja no Claude Code: no argv ele seria cortado na primeira quebra de linha
+    pelo cmd.exe.
+    """
+    try:
+        return await asyncio.wait_for(
+            proc.communicate(input=entrada.encode("utf-8") if entrada is not None else None),
+            timeout=CHAT_CLI_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            f"{rotulo} não respondeu em {CHAT_CLI_TIMEOUT}s; encerrando o processo"
+        )
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return None
+
 
 class AssistantService:
     """
@@ -63,23 +240,29 @@ class AssistantService:
         cwd = worktree_path if (worktree_path and os.path.isdir(worktree_path)) else project_root
         conv_id = conversation_id or (self._task_conversations.get(task_id) if task_id else None)
 
-        cmd = [agy_cmd, "-p", "--dangerously-skip-permissions"]
+        # O agy lê o argumento seguinte a -p como o prompt; com a flag ali, ele
+        # respondia à flag e descartava a pergunta. O prompt vai anexado.
         if conv_id:
-            cmd += ["--conversation", conv_id, user_message]
+            cmd = [agy_cmd, f"-p={user_message}", "--dangerously-skip-permissions",
+                   "--conversation", conv_id]
         else:
-            cmd.append(
+            abertura = (
                 f"Você é o Engenheiro de Software Sênior do Agent Orchestrator "
                 f"trabalhando no projeto '{project_name}'. "
                 f"Tarefa: '{task_title}'. Requisito: '{task_prompt}'.\n\n"
                 f"Mensagem do usuário: {user_message}"
             )
+            cmd = [agy_cmd, f"-p={abertura}", "--dangerously-skip-permissions"]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await proc.communicate()
+        resultado = await _comunicar_com_teto(proc, "agy")
+        if resultado is None:
+            return None
+        stdout, stderr = resultado
 
         if proc.returncode != 0:
             logger.error(
@@ -104,6 +287,206 @@ class AssistantService:
     def _get_http_client(self) -> httpx.AsyncClient:
         proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
         return httpx.AsyncClient(proxy=proxy, timeout=60.0)
+
+    async def completar_json(
+        self,
+        prompt: str,
+        prefixo: str = "",
+        max_tokens: int = 4000,
+        runner_config: Optional[Dict[str, Any]] = None,
+        esquema: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Uma chamada curta que devolve JSON — pelo CLI da tarefa ou pela API.
+
+        ORDEM: o CLI primeiro. Ele roda na assinatura que o usuário já paga,
+        não exige chave de API, e `--json-schema` OBRIGA a resposta ao formato
+        (mais forte que a API como está aqui, onde pedimos JSON no texto e
+        validamos depois). E quem refina passa a ser o mesmo motor que vai
+        executar: a ordem de serviço sai na linguagem de quem vai cumpri-la.
+
+        A API vem depois, para quem tiver chave e quiser velocidade — medido
+        em 13/10: ~4s pela API contra ~39s pelo agy.
+
+        `prefixo` é a parte estável do prompt (instruções, conhecimento do
+        projeto, árvore de arquivos) e vai antes, marcada para cache no caminho
+        de API; `prompt` é a parte que muda a cada tarefa. O CLI gerencia o
+        próprio contexto e não aceita marca de cache — ali os dois são
+        concatenados.
+
+        NÃO cai para o motor local embutido: ele não lê o projeto nem escreve
+        código, e a spec que ele produziria seria genérica — exatamente o
+        defeito do regex que este caminho veio substituir. Sem motor real,
+        levanta MotorIndisponivel e a tarefa não avança.
+        """
+        falhas: List[str] = []
+
+        if esquema:
+            cmd, entrada = montar_comando_json(
+                runner_config, prompt, prefixo, esquema,
+                caminho_agy=self._find_agy_cmd(),
+                caminho_claude=self._find_claude_cmd(),
+            )
+            if cmd:
+                try:
+                    return await self._json_por_cli(cmd, entrada)
+                except Exception as e:
+                    logger.error(f"Refino pelo CLI falhou: {e}")
+                    falhas.append(f"CLI: {self._motivo(e)}")
+
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY") or getattr(settings, "ANTHROPIC_API_KEY", None)
+        gemini_key = os.environ.get("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None)
+
+        if not anthropic_key and not gemini_key:
+            raise MotorIndisponivel(
+                "Nenhum motor disponível para lapidar o prompt. "
+                + ("; ".join(falhas) + ". " if falhas else "")
+                + "Escolha um motor de CLI (Claude Code ou agy) na tarefa, ou "
+                "informe ANTHROPIC_API_KEY/GEMINI_API_KEY em Ajustes."
+            )
+
+        if anthropic_key:
+            try:
+                return await self._json_anthropic(anthropic_key, prompt, prefixo, max_tokens)
+            except Exception as e:
+                logger.error(f"Refino via Anthropic falhou: {e}")
+                falhas.append(f"Anthropic: {self._motivo(e)}")
+
+        if gemini_key:
+            try:
+                # O Gemini não tem equivalente a cache_control explícito; o
+                # prefixo entra como texto normal, na mesma ordem.
+                return await self._json_gemini(gemini_key, f"{prefixo}\n\n{prompt}".strip(), max_tokens)
+            except Exception as e:
+                logger.error(f"Refino via Gemini falhou: {e}")
+                falhas.append(f"Gemini: {self._motivo(e)}")
+
+        raise MotorIndisponivel("Nenhum motor respondeu — " + "; ".join(falhas))
+
+    async def _json_por_cli(self, cmd: List[str], entrada: Optional[str]) -> str:
+        """
+        Roda o CLI e devolve o objeto que ele produziu sob o esquema.
+
+        O prompt vai por stdin quando `entrada` existe — é o caso do Claude
+        Code, despachado por claude.cmd, que é batch e teria o argumento
+        cortado na primeira quebra de linha.
+        """
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE if entrada is not None else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            # Teto próprio: medido em 13/10, o agy leva ~39s num refino. Sem
+            # teto, um CLI que não retorna prenderia a requisição para sempre.
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=entrada.encode("utf-8") if entrada is not None else None),
+                timeout=REFINO_CLI_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise MotorIndisponivel(
+                f"O CLI não respondeu em {int(REFINO_CLI_TIMEOUT / 60)} minutos ao "
+                "lapidar o prompt. Tente de novo, ou escolha outro motor para a "
+                "tarefa — o agy é bem mais lento que o Claude Code neste passo."
+            )
+
+        if proc.returncode != 0:
+            erro = stderr.decode("utf-8", errors="replace").strip()[:300]
+            raise MotorIndisponivel(f"O CLI saiu com código {proc.returncode}: {erro}")
+
+        return extrair_structured_output(stdout.decode("utf-8", errors="replace"))
+
+    @staticmethod
+    def _motivo(e: Exception) -> str:
+        """
+        O motivo que chega na tela. Precisa carregar o status HTTP: "401" diz
+        ao usuário que a chave está errada; "falhou" o manda adivinhar.
+        """
+        resp = getattr(e, "response", None)
+        if resp is not None and getattr(resp, "status_code", None):
+            return f"HTTP {resp.status_code} — {str(e)[:200]}"
+        return str(e)[:200] or e.__class__.__name__
+
+    async def _json_anthropic(
+        self, api_key: str, prompt: str, prefixo: str, max_tokens: int
+    ) -> str:
+        payload = {
+            "model": "claude-opus-5-5",
+            "max_tokens": max_tokens,
+            "system": (
+                "Você responde EXCLUSIVAMENTE com um objeto JSON válido, sem "
+                "cercas de código e sem texto antes ou depois."
+            ),
+            "messages": [
+                {"role": "user", "content": montar_blocos_cacheaveis(prefixo, prompt)}
+            ],
+        }
+        async with httpx.AsyncClient(
+            proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY"),
+            timeout=REFINO_TIMEOUT,
+        ) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                json=payload,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        # Cache que não acerta falha em SILÊNCIO — não há erro, só
+        # `cache_read_input_tokens: 0` para sempre. Sem registrar isso, não há
+        # como distinguir "está economizando" de "a ordem do prompt quebrou o
+        # prefixo". Este log é a única evidência de que o caching funciona.
+        uso = data.get("usage", {})
+        logger.info(
+            "Refino via Anthropic — tokens: %s novos, %s escritos no cache, %s lidos do cache",
+            uso.get("input_tokens", "?"),
+            uso.get("cache_creation_input_tokens", "?"),
+            uso.get("cache_read_input_tokens", "?"),
+        )
+
+        # A resposta pode trazer blocos de raciocínio antes do texto; só o
+        # bloco de texto interessa.
+        for bloco in data.get("content", []):
+            if bloco.get("type") == "text" and bloco.get("text", "").strip():
+                return bloco["text"].strip()
+        raise MotorIndisponivel("A Anthropic respondeu sem conteúdo de texto.")
+
+    async def _json_gemini(self, api_key: str, prompt: str, max_tokens: int) -> str:
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-2.0-flash:generateContent?key={api_key}"
+        )
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": max_tokens,
+                # Pedir JSON ao modelo em vez de torcer para ele obedecer o texto.
+                "responseMimeType": "application/json",
+            },
+        }
+        async with httpx.AsyncClient(
+            proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY"),
+            timeout=REFINO_TIMEOUT,
+        ) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        for cand in data.get("candidates", []):
+            for parte in cand.get("content", {}).get("parts", []):
+                if parte.get("text", "").strip():
+                    return parte["text"].strip()
+        raise MotorIndisponivel("O Gemini respondeu sem conteúdo de texto.")
 
     async def generate_chat_reply(
         self,
@@ -250,26 +633,42 @@ class AssistantService:
         modo = getattr(settings, "CLAUDE_PERMISSION_MODE", None) or "bypassPermissions"
         base = [claude_cmd, "-p", "--permission-mode", modo]
 
+        # O TEXTO NÃO ENTRA NA LINHA DE COMANDO — vai pela entrada padrão.
+        #
+        # claude.cmd é arquivo batch, e o cmd.exe corta o argumento na primeira
+        # quebra de linha. Na PRIMEIRA mensagem o estrago era total: o preâmbulo
+        # abaixo tem `\n\n` antes de "Mensagem do usuário", então a pergunta era
+        # descartada inteira mesmo com uma linha só, e o agente respondia algo
+        # genérico sobre a tarefa. Nas seguintes, só cortava mensagem de várias
+        # linhas — colar um erro, escrever em tópicos.
+        #
+        # É um defeito SILENCIOSO: a resposta sai coerente com o pedaço que
+        # chegou, e o usuário conclui que o agente "não entendeu".
         if known:
-            cmd = base + ["--resume", known, user_message]
+            cmd = base + ["--resume", known]
+            texto = user_message
         else:
             new_session = str(uuid.uuid4())
-            prompt = (
+            cmd = base + ["--session-id", new_session]
+            texto = (
                 f"Você é o Engenheiro de Software Sênior do Agent Orchestrator "
                 f"trabalhando no projeto '{project_name}'. "
                 f"Tarefa: '{task_title}'. Requisito: '{task_prompt}'.\n\n"
                 f"Mensagem do usuário: {user_message}"
             )
-            cmd = base + ["--session-id", new_session, prompt]
             known = new_session
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=cwd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await proc.communicate()
+        resultado = await _comunicar_com_teto(proc, "Claude CLI", entrada=texto)
+        if resultado is None:
+            return None
+        stdout, stderr = resultado
 
         if proc.returncode != 0:
             logger.error(

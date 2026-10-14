@@ -109,7 +109,7 @@ async def test_claude_cli_reaproveita_session_id_da_tarefa():
         class _Proc:
             returncode = 0
 
-            async def communicate(self):
+            async def communicate(self, input=None):
                 return (b"resposta", b"")
 
         return _Proc()
@@ -148,7 +148,7 @@ async def test_chat_tambem_passa_permission_mode():
         class _Proc:
             returncode = 0
 
-            async def communicate(self):
+            async def communicate(self, input=None):
                 return (b"resposta", b"")
 
         return _Proc()

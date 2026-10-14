@@ -99,7 +99,7 @@ backend/
       refiner_service.py # prompt bruto -> spec (heurístico, sem LLM)
       terminal_service.py# abre terminal nativo na pasta
     websockets/manager.py# broadcast por tarefa e para o dashboard
-  tests/                 # 36 arquivos, 182 testes (sem conftest.py)
+  tests/                 # 38 arquivos, 196 testes (sem conftest.py)
 frontend/src/
   App.tsx                # estado global, topbar, modais
   components/            # KanbanBoard, TaskCard, TaskDrawer, Sidebar, DiffViewer,
@@ -261,7 +261,9 @@ O `setInterval` de 20s **não** é polling de tarefas: ele sincroniza conversas 
 
 ## Testes
 
-182 testes em 36 arquivos. **Não há `conftest.py`** — cada arquivo redefine suas fixtures.
+196 testes em 38 arquivos. **Não há `conftest.py`** — cada arquivo redefine suas fixtures.
+
+O frontend passou a ter testes (vitest + testing-library): `npm test` em `frontend/`.
 
 Dois estilos de isolamento de banco:
 - **A — banco temporário**: `tmp_path` + `app.dependency_overrides[get_db]`. O correto.
@@ -275,7 +277,7 @@ Convenção: nomes e docstrings em **português**, descrevendo o sintoma real �
 
 Quase todo arquivo de teste nasceu de um defeito real. Ver a seção Gotchas.
 
-**Lacunas**: frontend sem teste algum; o corpo de `_run_task_background` nunca roda via HTTP
+**Lacunas**: frontend com cobertura mínima (só o isolamento do TaskDrawer e do hook de WS); o corpo de `_run_task_background` nunca roda via HTTP
 (`BackgroundTasks.add_task` é mockado); WebSocket só testado via mock do broadcast;
 `git_service.cleanup_task_git` sem teste do corpo real.
 

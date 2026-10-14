@@ -407,7 +407,12 @@ export default function App() {
         </main>
 
         {selectedTask && (
+          // A key força remontar ao trocar de tarefa. Sem ela o React
+          // reaproveitava a instância e TODO o estado interno atravessava a
+          // troca — mensagens, logs, diff, anexos e rascunho do campo —, então
+          // o usuário via o chat de uma tarefa dentro de outra.
           <TaskDrawer
+            key={selectedTask.id}
             task={selectedTask}
             onClose={() => setSelectedTask(null)}
             onTaskUpdated={handleTaskUpdated}

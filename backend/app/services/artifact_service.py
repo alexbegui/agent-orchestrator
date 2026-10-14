@@ -21,6 +21,14 @@ PROPOSTAS_FILE = os.path.join(".agent", "_proposto.md")
 # e o sinal se perde no ruído.
 MAX_PROPOSTAS = 3
 
+# Sumário de entrega que o agente escreve ao terminar (spec §8 e §7.2 item 3).
+# É o que o revisor lê ANTES do diff — e revisar diff de 500 linhas sem pista
+# nenhuma é o custo que ele existe para cortar.
+NOME_WALKTHROUGH = "walkthrough.md"
+
+# Sumário que não cabe na tela deixa de ser sumário.
+MAX_WALKTHROUGH = 6000
+
 KINDS = {
     ".md": "markdown", ".markdown": "markdown",
     ".html": "html", ".htm": "html",
@@ -111,9 +119,15 @@ class ArtifactService:
         if not base or not os.path.isdir(base):
             return []
 
+        # NORMALIZA ANTES DE JUNTAR. As duas fontes falam separadores
+        # diferentes: o git devolve `.agent/artefatos/x.md` e o os.path.relpath
+        # do `_da_pasta_combinada` devolve `.agent\artefatos\x.md` no Windows.
+        # São o mesmo arquivo e duas strings, então o set guardava os dois e o
+        # usuário via a entrada em dobro na aba Artefatos. Em Linux nunca
+        # acontecia — foi preciso uma execução real do agy para aparecer.
         relativos = set()
-        relativos.update(self._do_git(base))
-        relativos.update(self._da_pasta_combinada(base))
+        for rel in list(self._do_git(base)) + list(self._da_pasta_combinada(base)):
+            relativos.add(rel.replace("\\", "/"))
 
         itens = []
         for rel in sorted(relativos):
@@ -161,12 +175,20 @@ class ArtifactService:
         Marca `outside_task` no que veio de fora, para o usuário ver que o
         arquivo saiu do lugar em vez de simplesmente não encontrá-lo.
         Worktrees de OUTRAS tarefas ficam de fora: aquilo é trabalho alheio.
+
+        Cada item leva `rel_path`, o caminho a partir da RAIZ DO PROJETO — e é
+        por ele que a leitura acha o arquivo. Antes `name` era a única pista, e
+        ele é relativo a bases diferentes conforme o item veio de dentro ou de
+        fora da tarefa: a lista falava de um lugar e a leitura procurava em
+        outro, então artefato de fora aparecia e devolvia 404 ao abrir.
+        `name` continua curto, que é o que o usuário lê na tela.
         """
         itens: List[Dict[str, Any]] = []
         vistos = set()
 
         for item in self.listar(worktree_path) if worktree_path else []:
             item["outside_task"] = False
+            item["rel_path"] = self._chave(item["path"], project_root)
             vistos.add(item["name"])
             itens.append(item)
 
@@ -179,9 +201,27 @@ class ArtifactService:
                 vistos.add(nome)
                 item["name"] = nome
                 item["outside_task"] = True
+                item["rel_path"] = self._chave(item["path"], project_root)
                 itens.append(item)
 
         return itens
+
+    @staticmethod
+    def _chave(caminho_absoluto: str, project_root: str) -> Optional[str]:
+        """
+        Onde o arquivo está a partir da raiz do projeto.
+
+        A raiz é ancestral de tudo que varremos: o worktree da tarefa fica em
+        `<projeto>/.worktrees/task-<id>` e as outras worktrees ao lado dele.
+        Se um dia não for (worktree fora do projeto, caminho em outro disco),
+        devolve None em vez de um `../..` que a guarda de caminho recusaria.
+        """
+        try:
+            rel = os.path.relpath(caminho_absoluto, project_root)
+        except ValueError:
+            return None
+        rel = rel.replace("\\", "/")
+        return None if rel.startswith("../") or rel == ".." else rel
 
     def _outros_lugares(self, worktree_path: Optional[str], project_root: str) -> List[str]:
         """A raiz do projeto e worktrees que não pertencem a tarefas."""
@@ -469,6 +509,52 @@ class ArtifactService:
             "Registre o porquê, o que você tentou e falhou, e armadilhas.\n"
             "**Na maioria das tarefas, não escreva nada.**\n"
         )
+
+    def achar_walkthrough(self, worktree_path: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        O sumário de entrega que o agente deixou — ou None.
+
+        Procura na pasta de artefatos E na raiz do worktree, pelo mesmo motivo
+        de `listar_amplo` existir: o agente navega durante o trabalho e nem
+        sempre salva onde mandaram. Sumário que existe e não aparece é pior
+        que sumário ausente — o revisor conclui que ele não escreveu.
+
+        Devolve None quando não há, nunca um texto montado a partir do diff:
+        inventar o sumário seria declarar entrega sem evidência de entrega.
+        """
+        if not worktree_path or not os.path.isdir(worktree_path):
+            return None
+
+        candidatos = [
+            os.path.join(worktree_path, ARTIFACT_DIR, NOME_WALKTHROUGH),
+            os.path.join(worktree_path, NOME_WALKTHROUGH),
+        ]
+
+        for caminho in candidatos:
+            if not os.path.isfile(caminho):
+                continue
+            try:
+                with open(caminho, "r", encoding="utf-8", errors="replace") as f:
+                    texto = f.read().strip()
+            except OSError as e:
+                logger.warning(f"Sumário de entrega ilegível em {caminho}: {e}")
+                continue
+
+            # Arquivo criado e deixado em branco não é entrega.
+            if not texto:
+                continue
+
+            truncado = len(texto) > MAX_WALKTHROUGH
+            if truncado:
+                texto = texto[:MAX_WALKTHROUGH] + "\n…(sumário truncado)"
+
+            return {
+                "conteudo": texto,
+                "truncado": truncado,
+                "fora_da_pasta": caminho == candidatos[1],
+            }
+
+        return None
 
     def contexto_para_prompt(self, base: str) -> str:
         """
