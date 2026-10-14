@@ -62,6 +62,9 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
   const [diffText, setDiffText] = useState('');
   const [loadingAction, setLoadingAction] = useState(false);
   const [erroRefino, setErroRefino] = useState<string | null>(null);
+  // Separado de `loadingAction`: só o refino é lento o bastante para precisar
+  // avisar, e o aviso não pode aparecer ao despachar ou parar o agente.
+  const [lapidando, setLapidando] = useState(false);
   const [walkthrough, setWalkthrough] = useState<
     { conteudo: string; truncado: boolean; fora_da_pasta: boolean } | null
   >(null);
@@ -333,6 +336,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
   const handleRefinePrompt = async () => {
     setLoadingAction(true);
+    setLapidando(true);
     // Limpa o erro da tentativa anterior ANTES de tentar: deixá-lo na tela
     // enquanto a nova chamada roda faz a tentativa em curso parecer uma falha.
     setErroRefino(null);
@@ -349,6 +353,9 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
       setActiveTab('spec');
     } finally {
       setLoadingAction(false);
+      // No `finally` para sumir também quando falha: deixar "Lapidando…" na
+      // tela ao lado da mensagem de erro seria mentir duas vezes.
+      setLapidando(false);
     }
   };
 
@@ -523,8 +530,18 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
               disabled={loadingAction}
               className="bg-purple-600 hover:bg-purple-500 text-white text-[11px] px-2.5 py-1 rounded flex items-center gap-1 font-medium"
             >
-              <Sparkles size={11} /> Lapidar Prompt
+              <Sparkles size={11} className={lapidando ? 'animate-pulse' : undefined} />
+              {lapidando ? 'Lapidando…' : 'Lapidar Prompt'}
             </button>
+          )}
+          {/* O refino pelo CLI leva ~50s (contra ~4s pela API direta). Sem
+              dizer isso, a espera é indistinguível de travamento: o usuário
+              clica de novo ou fecha a tarefa. O número é o que transforma
+              espera em expectativa — mais do que qualquer animação. */}
+          {lapidando && (
+            <span className="text-[10.5px] text-purple-300/80">
+              a IA está lendo o projeto — costuma levar cerca de um minuto
+            </span>
           )}
           {task.status === 'SPEC_READY' && (
             <button
