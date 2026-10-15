@@ -6,7 +6,7 @@ import { Sidebar } from './components/Sidebar';
 import { KanbanBoard } from './components/KanbanBoard';
 import { TaskDrawer } from './components/TaskDrawer';
 import { ImportConversationModal } from './components/ImportConversationModal';
-import { Plus, Shield, Sparkles, FolderPlus, X, Key, Settings, Check, RefreshCw } from 'lucide-react';
+import { Plus, Shield, Sparkles, FolderPlus, X, Key, Settings, Check, RefreshCw, Play, RotateCw, Square, Terminal as TerminalIcon, ExternalLink, FileText, Globe } from 'lucide-react';
 
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -23,6 +23,8 @@ export default function App() {
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
+  const [newTaskTargetFiles, setNewTaskTargetFiles] = useState('');
+  const [newTaskFastMode, setNewTaskFastMode] = useState(false);
   // Padrão no Claude: o "assistente integrado" não escreve código, e tê-lo
   // como padrão fazia toda tarefa nova nascer sem conseguir implementar nada.
   const [newTaskRunner, setNewTaskRunner] = useState('claude');
@@ -197,17 +199,30 @@ export default function App() {
     if (!activeProjectId || !newTaskTitle || !newTaskPrompt) return;
     try {
       const runnerType = newTaskRunner === 'assistant' ? 'DIRECT_API' : 'SUBPROCESS_CLI';
+      const runnerConfig: Record<string, any> = { cli: newTaskRunner };
+      if (newTaskTargetFiles.trim()) {
+        runnerConfig.target_files = newTaskTargetFiles
+          .split(/[\n,;]+/)
+          .map((f) => f.trim())
+          .filter(Boolean);
+      }
+      if (newTaskFastMode) {
+        runnerConfig.fast_mode = true;
+      }
+
       const created = await api.createTask(
         activeProjectId,
         newTaskTitle,
         newTaskPrompt,
         runnerType,
-        { cli: newTaskRunner }
+        runnerConfig
       );
       setTasks((prev) => [...prev, created]);
       setIsNewTaskModalOpen(false);
       setNewTaskTitle('');
       setNewTaskPrompt('');
+      setNewTaskTargetFiles('');
+      setNewTaskFastMode(false);
       setSelectedTask(created);
     } catch (err: any) {
       alert(`Erro ao criar tarefa: ${err.message || 'Falha na requisição'}`);
@@ -233,6 +248,108 @@ export default function App() {
 
   const handleProjectUpdated = (updated: Project) => {
     setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+  };
+
+  const [isRunningServiceAction, setIsRunningServiceAction] = useState(false);
+  const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
+  const [serviceLogs, setServiceLogs] = useState<string>('');
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [serviceFeedback, setServiceFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const fetchServiceLogs = async (projectId: string) => {
+    setIsLoadingLogs(true);
+    try {
+      const res = await api.getProjectServiceLogs(projectId, 200);
+      setServiceLogs(res.logs || 'Sem logs disponíveis.');
+    } catch (e: any) {
+      setServiceLogs(`Erro ao buscar logs: ${e.message}`);
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  };
+
+  const handleStartService = async (project: Project) => {
+    setIsRunningServiceAction(true);
+    setServiceFeedback(null);
+    try {
+      const res = await api.startProjectService(project.id);
+      handleProjectUpdated({ ...project, is_service_running: res.is_running, service_pid: res.pid });
+      
+      // Dá 1.5s para o processo subir portas e detecta URLs
+      setTimeout(async () => {
+        try {
+          const st = await api.getProjectServiceStatus(project.id);
+          handleProjectUpdated({
+            ...project,
+            is_service_running: st.is_running,
+            service_pid: st.pid,
+            access_urls: st.access_urls || []
+          });
+          if (st.is_running) {
+            setServiceFeedback({
+              message: `Projeto iniciado com sucesso! PID: ${st.pid}`,
+              type: 'success'
+            });
+          }
+        } catch (_) {}
+      }, 1500);
+    } catch (err: any) {
+      setServiceFeedback({
+        message: `Erro ao iniciar projeto: ${err.message || 'Falha ao executar'}`,
+        type: 'error'
+      });
+    } finally {
+      setIsRunningServiceAction(false);
+    }
+  };
+
+  const handleStopService = async (project: Project) => {
+    setIsRunningServiceAction(true);
+    setServiceFeedback(null);
+    try {
+      const res = await api.stopProjectService(project.id);
+      handleProjectUpdated({ ...project, is_service_running: res.is_running, service_pid: undefined, access_urls: [] });
+      setServiceFeedback({ message: 'Serviço interrompido.', type: 'success' });
+    } catch (err: any) {
+      setServiceFeedback({ message: `Erro ao parar projeto: ${err.message || 'Falha ao parar'}`, type: 'error' });
+    } finally {
+      setIsRunningServiceAction(false);
+    }
+  };
+
+  const handleRestartService = async (project: Project) => {
+    setIsRunningServiceAction(true);
+    setServiceFeedback(null);
+    try {
+      const res = await api.restartProjectService(project.id);
+      handleProjectUpdated({ ...project, is_service_running: res.is_running, service_pid: res.pid });
+      
+      // Dá 1.5s para o processo subir portas e detecta URLs
+      setTimeout(async () => {
+        try {
+          const st = await api.getProjectServiceStatus(project.id);
+          handleProjectUpdated({
+            ...project,
+            is_service_running: st.is_running,
+            service_pid: st.pid,
+            access_urls: st.access_urls || []
+          });
+          if (st.is_running) {
+            setServiceFeedback({
+              message: `Projeto reconstruído e reiniciado com sucesso! PID: ${st.pid}`,
+              type: 'success'
+            });
+          }
+        } catch (_) {}
+      }, 1500);
+    } catch (err: any) {
+      setServiceFeedback({
+        message: `Erro ao reiniciar projeto: ${err.message || 'Falha ao reiniciar'}`,
+        type: 'error'
+      });
+    } finally {
+      setIsRunningServiceAction(false);
+    }
   };
 
   return (
@@ -403,6 +520,130 @@ export default function App() {
             )}
           </div>
 
+          {/* Widget de Controle de Execução do Projeto Ativo */}
+          {activeProject && activeProjectId !== '__ALL__' && (
+            <div className="mb-4 bg-gradient-to-b from-[#131724] to-[#0f121d] border border-[#23293d] rounded-xl p-3 px-4 flex items-center justify-between shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-medium">Serviço do Projeto:</span>
+                  {activeProject.is_service_running ? (
+                    <span className="flex items-center gap-1.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-md">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      Rodando {activeProject.service_pid ? `(PID ${activeProject.service_pid})` : ''}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded-md">
+                      Parado
+                    </span>
+                  )}
+                </div>
+
+                <div className="h-4 w-[1px] bg-[#23293d]" />
+
+                <div className="text-xs font-mono text-slate-400 bg-[#090a0f] border border-[#1f2436] px-2 py-0.5 rounded">
+                  {activeProject.dev_command || 'npm run dev'}
+                </div>
+              </div>
+
+              {/* Botões de Ação do Projeto (Rodar / Reiniciar / Parar / Logs / Links) */}
+              <div className="flex items-center gap-2">
+                {/* Links de Acesso Direto (detectados no terminal ou portas abertas) */}
+                {activeProject.is_service_running && activeProject.access_urls && activeProject.access_urls.length > 0 && (
+                  <div className="flex items-center gap-1.5 mr-1">
+                    {activeProject.access_urls.map((url) => (
+                      <a
+                        key={url}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`Abrir ${url} no navegador`}
+                        className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:border-emerald-500/50 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
+                      >
+                        <Globe size={13} className="text-emerald-400" />
+                        <span>{url.replace(/^https?:\/\//, '')}</span>
+                        <ExternalLink size={11} className="text-emerald-400 opacity-80" />
+                      </a>
+                    ))}
+                  </div>
+                )}
+
+                {/* Botão Ver Logs */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    fetchServiceLogs(activeProject.id);
+                    setIsLogsModalOpen(true);
+                  }}
+                  title="Ver logs do console de saída do serviço"
+                  className="bg-[#181c2b] hover:bg-[#20263a] text-slate-300 border border-[#2b334d] px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition"
+                >
+                  <FileText size={13} className="text-blue-400" />
+                  <span>Logs</span>
+                </button>
+
+                {activeProject.is_service_running ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isRunningServiceAction}
+                      onClick={() => handleRestartService(activeProject)}
+                      title="Encerra o processo atual e sobe o serviço novamente"
+                      className="bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                    >
+                      <RotateCw size={13} className={isRunningServiceAction ? 'animate-spin' : ''} />
+                      <span>Parar & Subir Novamente</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isRunningServiceAction}
+                      onClick={() => handleStopService(activeProject)}
+                      title="Interromper execução do serviço"
+                      className="bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                    >
+                      <Square size={13} />
+                      <span>Parar</span>
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isRunningServiceAction}
+                    onClick={() => handleStartService(activeProject)}
+                    title="Iniciar execução do projeto em segundo plano"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm disabled:opacity-50"
+                  >
+                    <Play size={13} />
+                    <span>Rodar Projeto</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Toast / Banner de Feedback do Serviço (confirmação se subiu ou caiu) */}
+          {serviceFeedback && (
+            <div
+              className={`mb-4 px-4 py-2.5 rounded-xl border flex items-center justify-between text-xs animate-in fade-in duration-200 ${
+                serviceFeedback.type === 'success'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span>{serviceFeedback.type === 'success' ? '🚀' : '⚠️'}</span>
+                <span className="font-medium">{serviceFeedback.message}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setServiceFeedback(null)}
+                className="text-slate-400 hover:text-white text-xs font-bold px-1"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           <KanbanBoard tasks={tasks} onSelectTask={(task) => setSelectedTask(task)} />
         </main>
 
@@ -512,6 +753,30 @@ export default function App() {
                   placeholder="Ex: Quero um componente de resumo de carrinho com validação de cupom e exibição de frete calculado..."
                   className="w-full bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                 />
+              </div>
+              <div>
+                <label className="block text-[#8a93a8] mb-1 font-medium">
+                  Arquivos Alvo (Opcional - economiza ~50% do tempo de refino)
+                </label>
+                <input
+                  type="text"
+                  value={newTaskTargetFiles}
+                  onChange={(e) => setNewTaskTargetFiles(e.target.value)}
+                  placeholder="Ex: backend/app/services/refiner_service.py (separados por vírgula)"
+                  className="w-full bg-[#090a0f] border border-[#262a3b] rounded-lg px-3 py-2 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono text-xs"
+                />
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="newTaskFastMode"
+                  checked={newTaskFastMode}
+                  onChange={(e) => setNewTaskFastMode(e.target.checked)}
+                  className="rounded border-[#262a3b] text-blue-600 focus:ring-0 bg-[#090a0f]"
+                />
+                <label htmlFor="newTaskFastMode" className="text-xs text-slate-300 cursor-pointer">
+                  ⚡ <strong>Refino Rápido</strong> (especificação direta e objetiva, menor latência)
+                </label>
               </div>
               <div>
                 <label className="block text-[#8a93a8] mb-1 font-medium">Motor / Runner do Agente</label>
@@ -641,6 +906,83 @@ export default function App() {
           onTaskImported={handleTaskImported}
           onBulkImported={() => activeProjectId && loadTasks(activeProjectId)}
         />
+      )}
+
+      {/* Modal de Logs de Saída do Serviço do Projeto */}
+      {isLogsModalOpen && activeProject && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+          <div className="bg-[#10131e] border border-[#262f49] rounded-xl w-full max-w-3xl flex flex-col max-h-[85vh] shadow-2xl overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-[#232a3f] flex items-center justify-between bg-[#151928]">
+              <div className="flex items-center gap-2.5">
+                <FileText size={16} className="text-blue-400" />
+                <div>
+                  <h3 className="font-bold text-white text-xs">
+                    Logs de Execução: <span className="text-blue-300">{activeProject.name}</span>
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-mono">
+                    Comando: {activeProject.dev_command || 'npm run dev'} {activeProject.service_pid ? `• PID ${activeProject.service_pid}` : ''}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fetchServiceLogs(activeProject.id)}
+                  disabled={isLoadingLogs}
+                  className="px-2.5 py-1 rounded bg-[#1c2236] hover:bg-[#252c46] text-xs text-slate-300 flex items-center gap-1.5 border border-[#2e3757] transition disabled:opacity-50"
+                  title="Atualizar logs agora"
+                >
+                  <RefreshCw size={12} className={isLoadingLogs ? 'animate-spin' : ''} />
+                  <span>{isLoadingLogs ? 'Lendo...' : 'Atualizar'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsLogsModalOpen(false)}
+                  className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 flex-1 overflow-y-auto bg-[#090b12] font-mono text-[11px] leading-relaxed text-slate-300 whitespace-pre-wrap select-text custom-scroll">
+              {serviceLogs ? (
+                serviceLogs
+              ) : (
+                <span className="text-slate-500 italic">Nenhum log registrado para este projeto.</span>
+              )}
+            </div>
+
+            <div className="px-5 py-2.5 bg-[#121624] border-t border-[#232a3f] flex items-center justify-between text-[11px] text-slate-400">
+              <div className="flex items-center gap-2">
+                {activeProject.access_urls && activeProject.access_urls.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 font-semibold">Acessar:</span>
+                    {activeProject.access_urls.map((url) => (
+                      <a
+                        key={url}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-emerald-400 hover:underline flex items-center gap-1"
+                      >
+                        {url} <ExternalLink size={10} />
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsLogsModalOpen(false)}
+                className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs transition"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

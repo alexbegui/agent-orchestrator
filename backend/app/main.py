@@ -98,6 +98,11 @@ uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/api/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
+# Servir Mockups de protótipos
+mockups_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "docs", "mockups"))
+if os.path.exists(mockups_dir):
+    app.mount("/mockups", StaticFiles(directory=mockups_dir, html=True), name="mockups")
+
 # Servir Frontend Estático compilado se existir
 frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
 if os.path.exists(frontend_dist):

@@ -32,13 +32,51 @@ export const api = {
     return handleResponse<Project>(res);
   },
 
-  async updateProject(id: string, data: { name?: string; default_branch?: string }): Promise<Project> {
+  async updateProject(id: string, data: { name?: string; default_branch?: string; dev_command?: string }): Promise<Project> {
     const res = await fetch(`${BASE_URL}/projects/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
     return handleResponse<Project>(res);
+  },
+
+  /** Inicia o serviço do projeto desacoplado. */
+  async startProjectService(projectId: string, command?: string): Promise<{ is_running: boolean; pid: number; command: string }> {
+    const res = await fetch(`${BASE_URL}/projects/${projectId}/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(command ? { command } : {}),
+    });
+    return handleResponse(res);
+  },
+
+  /** Encerra o serviço do projeto. */
+  async stopProjectService(projectId: string): Promise<{ stopped: boolean; is_running: boolean }> {
+    const res = await fetch(`${BASE_URL}/projects/${projectId}/stop`, { method: 'POST' });
+    return handleResponse(res);
+  },
+
+  /** Reinicia o serviço do projeto (para se estiver vivo e sobe novamente). */
+  async restartProjectService(projectId: string, command?: string): Promise<{ is_running: boolean; pid: number; command: string }> {
+    const res = await fetch(`${BASE_URL}/projects/${projectId}/restart`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(command ? { command } : {}),
+    });
+    return handleResponse(res);
+  },
+
+  /** Obtém status em tempo real do processo do projeto e URLs detectadas. */
+  async getProjectServiceStatus(projectId: string): Promise<{ is_running: boolean; pid?: number; command?: string; started_at?: number; uptime_seconds?: number; access_urls?: string[] }> {
+    const res = await fetch(`${BASE_URL}/projects/${projectId}/service-status`);
+    return handleResponse(res);
+  },
+
+  /** Obtém logs recentes de saída do serviço do projeto. */
+  async getProjectServiceLogs(projectId: string, lines = 150): Promise<{ logs: string }> {
+    const res = await fetch(`${BASE_URL}/projects/${projectId}/service-logs?lines=${lines}`);
+    return handleResponse(res);
   },
 
   // Tasks
@@ -168,8 +206,15 @@ export const api = {
     return handleResponse<Task>(res);
   },
 
-  async refineTask(taskId: string): Promise<Task> {
-    const res = await fetch(`${BASE_URL}/tasks/${taskId}/refine`, { method: 'POST' });
+  async refineTask(
+    taskId: string,
+    options?: { target_files?: string[]; fast_mode?: boolean }
+  ): Promise<Task> {
+    const res = await fetch(`${BASE_URL}/tasks/${taskId}/refine`, {
+      method: 'POST',
+      headers: options ? { 'Content-Type': 'application/json' } : undefined,
+      body: options ? JSON.stringify(options) : undefined,
+    });
     return handleResponse<Task>(res);
   },
 

@@ -64,3 +64,27 @@ def test_api_endpoint_skills_available():
         assert resp.status_code == 200
         dados = resp.json()
         assert isinstance(dados, list)
+
+
+def test_skills_filtro_contextual_omite_design_em_backend():
+    service = SkillsService()
+    skills = [
+        {"name": "test-driven-development", "description": "TDD"},
+        {"name": "systematic-debugging", "description": "Debugging"},
+        {"name": "banner-design", "description": "Banner design"},
+        {"name": "slides", "description": "HTML presentations"},
+    ]
+
+    # Para tarefa de backend/database, omite banner-design e slides
+    filtradas = service.filter_skills_for_context(skills, "criar endpoint fastapi com sqlalchemy e testes")
+    nomes = [s["name"] for s in filtradas]
+    assert "test-driven-development" in nomes
+    assert "systematic-debugging" in nomes
+    assert "banner-design" not in nomes
+    assert "slides" not in nomes
+
+    # Para tarefa com interesse em design/UI, mantém
+    mantidas = service.filter_skills_for_context(skills, "desenhar tela de checkout com layout tailwind e banner")
+    nomes_mantidos = [s["name"] for s in mantidas]
+    assert "banner-design" in nomes_mantidos
+

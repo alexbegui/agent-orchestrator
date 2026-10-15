@@ -187,14 +187,26 @@ class PromptRefinerService:
         recentes: Optional[list[str]] = None,
         conhecimento: str = "",
         runner_config: Optional[dict] = None,
+        target_files: Optional[list[str]] = None,
+        fast_mode: bool = False,
     ) -> RefinedSpec:
         self._runner_config = runner_config
         texto_arvore, aviso = montar_arvore(arvore, recentes=recentes)
         permitidos = set(arvore)
 
-        escolhas = await self._escolher_arquivos(raw_prompt, texto_arvore, conhecimento, permitidos)
+        # Se o usuário já informou arquivos alvo existentes, pula a Chamada 1 (economiza ~50% do tempo)
+        escolhas = []
+        if target_files:
+            for f in target_files:
+                caminho = f.replace("\\", "/").strip()
+                if caminho in permitidos:
+                    escolhas.append({"caminho": caminho, "motivo": "Informado diretamente pelo usuário"})
+        
+        if not escolhas:
+            escolhas = await self._escolher_arquivos(raw_prompt, texto_arvore, conhecimento, permitidos)
+
         conteudos = self._ler_escolhidos(escolhas, ler)
-        spec = await self._especificar(raw_prompt, escolhas, conteudos, conhecimento)
+        spec = await self._especificar(raw_prompt, escolhas, conteudos, conhecimento, fast_mode=fast_mode)
 
         spec.target_files = [e["caminho"] for e in escolhas]
         spec.motivos = {e["caminho"]: e["motivo"] for e in escolhas}
@@ -269,10 +281,20 @@ Responda em JSON:
         return conteudos
 
     async def _especificar(
-        self, raw_prompt: str, escolhas: list[dict], conteudos: dict[str, str], conhecimento: str
+        self,
+        raw_prompt: str,
+        escolhas: list[dict],
+        conteudos: dict[str, str],
+        conhecimento: str,
+        fast_mode: bool = False,
     ) -> RefinedSpec:
         blocos = "\n\n".join(
             f"### {caminho}\n```\n{texto}\n```" for caminho, texto in conteudos.items()
+        )
+        diretiva_modo = (
+            "- Modo rápido ativado: seja direto e conciso. Foque em 1 a 3 passos essenciais e no teste principal."
+            if fast_mode
+            else "- O trabalho é feito com TDD: liste os testes a escrever ANTES do código, cada um com o arquivo, o nome da função e o que ele prova."
         )
         prompt = f"""Você é o engenheiro de especificação de um orquestrador de agentes.
 Escreva a especificação técnica que será entregue a um agente de IA para
@@ -284,8 +306,7 @@ Regras:
 - Os critérios de aceite precisam ser verificáveis e citar o comportamento
   concreto desta tarefa. Critério genérico ("testes passando", "sem erro de
   lint") não serve e será rejeitado.
-- O trabalho é feito com TDD: liste os testes a escrever ANTES do código,
-  cada um com o arquivo, o nome da função e o que ele prova.
+{diretiva_modo}
 
 {conhecimento}
 

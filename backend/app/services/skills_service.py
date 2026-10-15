@@ -98,16 +98,50 @@ class SkillsService:
 
         return sorted(skills.values(), key=lambda s: s["name"])
 
-    def format_summary(self, skills: List[Dict[str, str]]) -> str:
+    def filter_skills_for_context(self, skills: List[Dict[str, str]], prompt_text: str = "") -> List[Dict[str, str]]:
+        """
+        Filtra skills para evitar inflar o prompt com ferramentas de domínio desconexo.
+        Skills puramente visuais/mídia (slides, banners, brandkit) são omitidas quando a
+        tarefa é de backend, infra ou testes, economizando milhares de tokens de contexto.
+        """
+        if not prompt_text:
+            return skills
+
+        texto = prompt_text.lower()
+        palavras_visuais = {
+            "ui", "ux", "frontend", "front-end", "design", "layout", "css", "html",
+            "banner", "slide", "apresentacao", "apresentação", "estilo", "cor",
+            "mockup", "figma", "tailwind", "react", "componente", "visual"
+        }
+        tem_interesse_visual = any(re.search(rf"\b{p}\b", texto) for p in palavras_visuais)
+
+        skills_visuais = {
+            "banner-design", "brand", "brandkit", "design", "design-system",
+            "design-taste-frontend", "design-taste-frontend-v1", "gpt-taste",
+            "high-end-visual-design", "imagegen-frontend-mobile", "imagegen-frontend-web",
+            "industrial-brutalist-ui", "minimalist-ui", "slides", "stitch-design-taste"
+        }
+
+        if not tem_interesse_visual:
+            return [s for s in skills if s["name"] not in skills_visuais]
+
+        return skills
+
+    def format_summary(self, skills: List[Dict[str, str]], prompt_text: Optional[str] = None) -> str:
         if not skills:
+            return ""
+
+        filtradas = self.filter_skills_for_context(skills, prompt_text or "")
+        if not filtradas:
             return ""
 
         linhas = [
             "## Available Skills (Progressive Disclosure - Read via tool only if needed):"
         ]
-        for s in skills:
+        for s in filtradas:
             linhas.append(f"- **{s['name']}**: {s['description']}")
         return "\n".join(linhas)
 
 
 skills_service = SkillsService()
+

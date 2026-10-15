@@ -15,14 +15,17 @@ from app.models.task import Task, TaskStatus, RunnerType
 from app.services.runner_service import RunnerService
 
 
+from unittest.mock import patch
+
 def test_agy_resolve_cli_inclui_conversation_id():
     runner = RunnerService()
     conv_id = str(uuid.uuid4())
-    cmd = runner.resolve_cli_command(
-        runner_type="SUBPROCESS_CLI",
-        prompt="minha tarefa",
-        config={"cli": "agy", "antigravity_conversation_id": conv_id}
-    )
+    with patch.object(runner, "_agy_padrao", return_value="agy"):
+        cmd = runner.resolve_cli_command(
+            runner_type="SUBPROCESS_CLI",
+            prompt="minha tarefa",
+            config={"cli": "agy", "antigravity_conversation_id": conv_id}
+        )
     assert "--conversation" in cmd
     idx = cmd.index("--conversation")
     assert cmd[idx + 1] == conv_id

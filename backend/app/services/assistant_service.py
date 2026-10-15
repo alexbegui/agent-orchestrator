@@ -3,6 +3,7 @@ import json
 import uuid
 import shutil
 import asyncio
+import sqlite3
 import logging
 from typing import Optional, List, Dict, Any
 import httpx
@@ -163,7 +164,7 @@ def extrair_structured_output(saida: str) -> str:
     return json.dumps(estruturado, ensure_ascii=False)
 
 
-async def _comunicar_com_teto(proc, rotulo: str, entrada: Optional[str] = None):
+async def _comunicar_com_teto(proc, rotulo: str, entrada: Optional[str] = None, on_chunk: Optional[Any] = None):
     """
     Espera a saída do processo, mas desiste no teto e mata a árvore.
 
@@ -173,12 +174,56 @@ async def _comunicar_com_teto(proc, rotulo: str, entrada: Optional[str] = None):
     `entrada` vai pela entrada padrão, em UTF-8. É por onde o texto do chat
     viaja no Claude Code: no argv ele seria cortado na primeira quebra de linha
     pelo cmd.exe.
+
+    `on_chunk` opcional: quando fornecido, lê progressivamente o stdout e envia
+    chunks via streaming em tempo real, sem esperar o encerramento do processo.
     """
+    if not on_chunk:
+        try:
+            return await asyncio.wait_for(
+                proc.communicate(input=entrada.encode("utf-8") if entrada is not None else None),
+                timeout=CHAT_CLI_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"{rotulo} não respondeu em {CHAT_CLI_TIMEOUT}s; encerrando o processo"
+            )
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return None
+
     try:
-        return await asyncio.wait_for(
-            proc.communicate(input=entrada.encode("utf-8") if entrada is not None else None),
-            timeout=CHAT_CLI_TIMEOUT,
-        )
+        async def _ler_stream():
+            if entrada is not None and proc.stdin:
+                proc.stdin.write(entrada.encode("utf-8"))
+                await proc.stdin.drain()
+                try:
+                    proc.stdin.close()
+                    await proc.stdin.wait_closed()
+                except Exception:
+                    pass
+
+            stdout_chunks = []
+            while True:
+                chunk = await proc.stdout.read(256)
+                if not chunk:
+                    break
+                texto = chunk.decode("utf-8", errors="replace")
+                stdout_chunks.append(texto)
+                try:
+                    res = on_chunk(texto)
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception as e:
+                    logger.debug(f"Erro em on_chunk: {e}")
+
+            stderr = await proc.stderr.read() if proc.stderr else b""
+            await proc.wait()
+            return "".join(stdout_chunks).encode("utf-8"), stderr
+
+        return await asyncio.wait_for(_ler_stream(), timeout=CHAT_CLI_TIMEOUT)
     except asyncio.TimeoutError:
         logger.error(
             f"{rotulo} não respondeu em {CHAT_CLI_TIMEOUT}s; encerrando o processo"
@@ -230,7 +275,8 @@ class AssistantService:
         project_name: str,
         project_root: str,
         conversation_id: Optional[str] = None,
-        worktree_path: Optional[str] = None
+        worktree_path: Optional[str] = None,
+        on_chunk: Optional[Any] = None,
     ) -> Optional[str]:
         """Conversa pelo agy, retomando a conversa por ID quando já existe."""
         agy_cmd = self._find_agy_cmd()
@@ -259,7 +305,7 @@ class AssistantService:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        resultado = await _comunicar_com_teto(proc, "agy")
+        resultado = await _comunicar_com_teto(proc, "agy", on_chunk=on_chunk)
         if resultado is None:
             return None
         stdout, stderr = resultado
@@ -501,7 +547,8 @@ class AssistantService:
         conversation_id: Optional[str] = None,
         attachments: Optional[List[dict]] = None,
         cli_preference: Optional[str] = None,
-        worktree_path: Optional[str] = None
+        worktree_path: Optional[str] = None,
+        on_chunk: Optional[Any] = None,
     ) -> str:
         # O agente navega durante o trabalho (entra na pasta do docker, por
         # exemplo) e passa a salvar lá. Lembrar a cada mensagem é barato.
@@ -529,7 +576,7 @@ class AssistantService:
                     task_id=task_id, task_title=task_title, task_prompt=task_prompt,
                     user_message=effective_message, project_name=project_name,
                     project_root=project_root, conversation_id=conversation_id,
-                    worktree_path=worktree_path
+                    worktree_path=worktree_path, on_chunk=on_chunk
                 )
                 if reply:
                     return reply
@@ -541,7 +588,8 @@ class AssistantService:
                 reply = await self._call_claude_cli(
                     task_id=task_id, task_title=task_title, task_prompt=task_prompt,
                     user_message=effective_message, project_name=project_name,
-                    project_root=project_root, worktree_path=worktree_path
+                    project_root=project_root, worktree_path=worktree_path,
+                    on_chunk=on_chunk
                 )
                 if reply:
                     return reply
@@ -554,7 +602,7 @@ class AssistantService:
                 task_id=task_id, task_title=task_title, task_prompt=task_prompt,
                 user_message=effective_message, project_name=project_name,
                 project_root=project_root, conversation_id=conversation_id,
-                worktree_path=worktree_path
+                worktree_path=worktree_path, on_chunk=on_chunk
             )
             if reply:
                 return reply
@@ -566,7 +614,7 @@ class AssistantService:
         if agentapi_cmd:
             try:
                 reply = await self._call_antigravity_cli(
-                    agentapi_cmd, task_id, task_title, task_prompt, effective_message, project_name, project_root, conversation_id=conversation_id
+                    agentapi_cmd, task_id, task_title, task_prompt, effective_message, project_name, project_root, conversation_id=conversation_id, worktree_path=worktree_path
                 )
                 if reply:
                     return reply
@@ -608,7 +656,8 @@ class AssistantService:
         project_name: str,
         project_root: str,
         session_id: Optional[str] = None,
-        worktree_path: Optional[str] = None
+        worktree_path: Optional[str] = None,
+        on_chunk: Optional[Any] = None,
     ) -> Optional[str]:
         """
         Conversa pelo Claude Code CLI local, mantendo a continuidade por sessão.
@@ -665,7 +714,7 @@ class AssistantService:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        resultado = await _comunicar_com_teto(proc, "Claude CLI", entrada=texto)
+        resultado = await _comunicar_com_teto(proc, "Claude CLI", entrada=texto, on_chunk=on_chunk)
         if resultado is None:
             return None
         stdout, stderr = resultado
@@ -682,6 +731,47 @@ class AssistantService:
 
         return stdout.decode("utf-8", errors="replace").strip() or None
 
+    def ensure_conversation_workspace(self, conv_id: str, project_root: str) -> None:
+        """
+        Garante que a conversa criada no Antigravity seja associada ao workspace correto
+        (projeto específico) na barra lateral esquerda do Antigravity, evitando que caia
+        em agent-orchestrator ou outside-of-project.
+        """
+        if not conv_id or not project_root:
+            return
+        try:
+            drive, rest = os.path.splitdrive(os.path.abspath(project_root))
+            uri = "file:///" + drive.lower().replace(":", "%3A") + rest.replace(os.sep, "/")
+            target_workspace_json = json.dumps([uri])
+
+            db_path = os.path.expanduser("~/.gemini/antigravity/conversation_summaries.db")
+            if not os.path.exists(db_path):
+                return
+
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            c = conn.cursor()
+
+            # Procura se já existe um project_id associado a este workspace_uris
+            c.execute(
+                "SELECT project_id FROM conversation_summaries WHERE workspace_uris = ? AND project_id != 'outside-of-project' AND project_id != '' LIMIT 1",
+                (target_workspace_json,)
+            )
+            row = c.fetchone()
+            if row and row[0]:
+                target_project_id = row[0]
+            else:
+                target_project_id = str(uuid.uuid4())
+
+            c.execute(
+                "UPDATE conversation_summaries SET workspace_uris = ?, project_id = ? WHERE conversation_id = ?",
+                (target_workspace_json, target_project_id, conv_id)
+            )
+            conn.commit()
+            conn.close()
+            logger.info(f"[Antigravity] Conversa {conv_id} vinculada ao workspace {uri} (project_id={target_project_id})")
+        except Exception as e:
+            logger.warning(f"[Antigravity] Não foi possível vincular workspace da conversa {conv_id}: {e}")
+
     async def _call_antigravity_cli(
         self,
         agentapi_cmd: str,
@@ -691,7 +781,8 @@ class AssistantService:
         user_message: str,
         project_name: str,
         project_root: str,
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        worktree_path: Optional[str] = None
     ) -> Optional[str]:
         """
         Executa uma mensagem diretamente pelo Antigravity CLI nativo da máquina.
@@ -701,6 +792,8 @@ class AssistantService:
         if conv_id and task_id:
             self._task_conversations[task_id] = conv_id
         transcript_path = os.path.expanduser(f"~/.gemini/antigravity/brain/{conv_id}/.system_generated/logs/transcript.jsonl") if conv_id else None
+
+        cwd = worktree_path if (worktree_path and os.path.isdir(worktree_path)) else (project_root if (project_root and os.path.isdir(project_root)) else None)
 
         if conv_id and os.path.exists(transcript_path):
             # Conta mensagens anteriores para saber a partir de qual ler a nova resposta
@@ -716,6 +809,7 @@ class AssistantService:
             cmd = f'"{agentapi_cmd}" send-message {conv_id} "{escaped_msg}"'
             proc = await asyncio.create_subprocess_shell(
                 cmd,
+                cwd=cwd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -751,6 +845,7 @@ class AssistantService:
             cmd = f'"{agentapi_cmd}" new-conversation --model=flash --title="{escaped_title}" "{escaped_prompt}"'
             proc = await asyncio.create_subprocess_shell(
                 cmd,
+                cwd=cwd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -761,6 +856,7 @@ class AssistantService:
                 if new_conv_id:
                     if task_id:
                         self._task_conversations[task_id] = new_conv_id
+                    self.ensure_conversation_workspace(new_conv_id, project_root)
                     return await self._wait_for_transcript_reply(new_conv_id, 0)
             except Exception as e:
                 logger.error(f"Falha ao interpretar retorno do new-conversation: {e}")

@@ -737,8 +737,17 @@ def create_task(data: TaskCreate, db: Session = Depends(get_db)):
     return task
 
 
+class RefineOptions(BaseModel):
+    target_files: Optional[List[str]] = None
+    fast_mode: Optional[bool] = False
+
+
 @router.post("/{task_id}/refine", response_model=TaskResponse)
-async def refine_task(task_id: str, db: Session = Depends(get_db)):
+async def refine_task(
+    task_id: str,
+    options: Optional[RefineOptions] = None,
+    db: Session = Depends(get_db)
+):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
@@ -763,6 +772,10 @@ async def refine_task(task_id: str, db: Session = Depends(get_db)):
         with open(caminho, "r", encoding="utf-8", errors="replace") as f:
             return f.read()
 
+    cfg = dict(task.runner_config or {})
+    target_files = options.target_files if (options and options.target_files is not None) else cfg.get("target_files")
+    fast_mode = bool(options.fast_mode if (options and options.fast_mode is not None) else cfg.get("fast_mode", False))
+
     try:
         spec = await refiner_service.refinar(
             task.raw_prompt,
@@ -774,6 +787,8 @@ async def refine_task(task_id: str, db: Session = Depends(get_db)):
             # serviço sai na linguagem de quem vai cumpri-la, e roda na
             # assinatura que o usuário já paga, sem exigir chave de API.
             runner_config=task.runner_config,
+            target_files=target_files,
+            fast_mode=fast_mode,
         )
     except (MotorIndisponivel, RespostaInvalida) as e:
         # A tarefa NÃO avança. Antes a rota não tinha como falhar (o regex
@@ -899,6 +914,10 @@ async def _run_task_background(task_id: str, project_path: str, command: list[st
                     and not t.runner_config.get("antigravity_conversation_id"):
                 t.runner_config = {**t.runner_config, "antigravity_conversation_id": conv_id}
             db.commit()
+
+            target_conv = conv_id or (t.runner_config.get("antigravity_conversation_id") if isinstance(t.runner_config, dict) else None)
+            if target_conv:
+                assistant_service.ensure_conversation_workspace(target_conv, project_path)
         db.close()
 
         await ws_manager.broadcast_task(task_id, {
@@ -997,6 +1016,8 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    if task.status == TaskStatus.DONE:
+        raise HTTPException(status_code=400, detail="Esta tarefa já foi concluída e está arquivada.")
 
     # Se o pool de concorrência estiver cheio, enfileira a tarefa (QUEUED)
     if not queue_service.can_run_now(db):
@@ -1016,7 +1037,7 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
 
     # Injeta resumo compacto de skills disponíveis via Progressive Disclosure
     skills_list = skills_service.list_skills(task.project.root_path)
-    skills_summary = skills_service.format_summary(skills_list) if skills_list else None
+    skills_summary = skills_service.format_summary(skills_list, prompt_text=pedido) if skills_list else None
 
     # ORDEM: o que não muda vem primeiro, o pedido da tarefa por último.
     # O prefixo se repete entre tarefas para aproveitar o prompt caching.
@@ -1143,6 +1164,13 @@ def merge_task(task_id: str, db: Session = Depends(get_db)):
 
     git_service.remove_worktree(task.project.root_path, task.id)
     task.status = TaskStatus.DONE
+    # Desvincula e arquiva as sessões ativas do Antigravity e Claude
+    if isinstance(task.runner_config, dict):
+        cfg = dict(task.runner_config)
+        cfg.pop("antigravity_conversation_id", None)
+        cfg.pop("claude_session_id", None)
+        cfg.pop("chat_busy_since", None)
+        task.runner_config = cfg
     db.commit()
     return {"merged": True, "status": "DONE", "artifacts_indexed": registrados}
 
@@ -1184,6 +1212,8 @@ async def send_task_message(task_id: str, data: MessageCreate, background_tasks:
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    if task.status == TaskStatus.DONE:
+        raise HTTPException(status_code=400, detail="Esta tarefa já foi concluída e está arquivada. O histórico está em modo somente leitura.")
 
     # Recupera histórico anterior
     prev_messages = db.query(Message).filter(Message.task_id == task_id).order_by(Message.created_at.asc()).all()
@@ -1232,21 +1262,29 @@ async def send_task_message(task_id: str, data: MessageCreate, background_tasks:
         "project_id": task.project_id,
     })
 
+    async def on_stream_chunk(chunk: str):
+        await ws_manager.broadcast_task(task.id, {
+            "type": "MESSAGE_CHUNK",
+            "task_id": task.id,
+            "chunk": chunk
+        })
+
     reply_text = await _responder_e_desmarcar(
         db, task,
         assistant_service.generate_chat_reply(
-        task_id=task.id,
-        task_title=task.title,
-        task_prompt=task.raw_prompt,
-        history=history,
-        project_root=task.project.root_path,
-        user_message=data.content,
-        project_name=task.project.name,
-        git_branch=task.git_branch,
-        conversation_id=conv_id,
-        attachments=data.attachments,
+            task_id=task.id,
+            task_title=task.title,
+            task_prompt=task.raw_prompt,
+            history=history,
+            project_root=task.project.root_path,
+            user_message=data.content,
+            project_name=task.project.name,
+            git_branch=task.git_branch,
+            conversation_id=conv_id,
+            attachments=data.attachments,
             cli_preference=cli_preference,
-            worktree_path=task.worktree_path
+            worktree_path=task.worktree_path,
+            on_chunk=on_stream_chunk,
         )
     )
 

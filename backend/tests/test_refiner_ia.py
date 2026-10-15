@@ -256,3 +256,42 @@ async def test_sem_chave_de_api_o_motor_recusa_em_vez_de_inventar(monkeypatch):
     texto = str(erro.value).lower()
     assert "cli" in texto
     assert "api_key" in texto
+
+
+@pytest.mark.asyncio
+async def test_refino_com_target_files_pula_chamada_1():
+    """
+    Quando o usuário já fornece os arquivos alvo, a Chamada 1 (_escolher_arquivos)
+    é pulada, economizando uma chamada inteira de LLM/CLI (~50% do tempo).
+    Provado aqui: o motor só tem UMA resposta (SPEC_OK); se tentasse a Chamada 1,
+    o teste falharia com AssertionError.
+    """
+    refiner = PromptRefinerService(motor=motor_falso(SPEC_OK))
+
+    spec = await refiner.refinar(
+        "exponha o endpoint de frete",
+        arvore=ARVORE,
+        ler=ler_fixo,
+        target_files=["app/services/frete.py"],
+    )
+
+    assert spec.target_files == ["app/services/frete.py"]
+    assert spec.motivos["app/services/frete.py"] == "Informado diretamente pelo usuário"
+    assert "endpoint" in spec.objective
+
+
+@pytest.mark.asyncio
+async def test_refino_fast_mode():
+    """Modo rápido gera especificação funcional sem quebrar o contrato da RefinedSpec."""
+    refiner = PromptRefinerService(motor=motor_falso(ESCOLHA_OK, SPEC_OK))
+
+    spec = await refiner.refinar(
+        "ajuste simples no frete",
+        arvore=ARVORE,
+        ler=ler_fixo,
+        fast_mode=True,
+    )
+
+    assert len(spec.target_files) > 0
+    assert len(spec.steps) > 0
+

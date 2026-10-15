@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup — Telemetria de Tokens & Economia (Agent Orchestrator)</title>
+<style>
+  :root {
+    --bg: #090a0f;
+    --panel: #12141c;
+    --card: #1a1d28;
+    --card-hover: #202434;
+    --border: #262a3b;
+    --border-soft: #1c2030;
+    --muted: #8a93a8;
+    --agy: #a855f7;
+    --claude: #f97316;
+    --emerald: #10b981;
+    --amber: #f59e0b;
+    --blue: #3b82f6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: #f1f5f9; padding: 24px 28px 60px;
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .mockbar {
+    background: #171b26; border: 1px solid #2a344d; color: #93c5fd;
+    padding: 10px 16px; border-radius: 10px; font-size: 12px; margin-bottom: 24px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .tag { background: #1e293b; padding: 3px 8px; border-radius: 6px; font-weight: 600; font-size: 11px; }
+
+  /* Topbar Preview */
+  .preview-section { margin-bottom: 32px; }
+  .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 700; margin-bottom: 10px; }
+  
+  .topbar-mock {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 10px 18px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 12px; }
+  .logo { font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .logo-box { width: 28px; height: 28px; background: rgba(59,130,246,0.2); border: 1px solid rgba(59,130,246,0.4); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #60a5fa; font-weight: 800; font-size: 12px; }
+
+  /* Token Widget in Topbar */
+  .token-widget {
+    background: #0d0f17; border: 1px solid #2d344a; border-radius: 9px;
+    padding: 6px 14px; display: flex; align-items: center; gap: 14px; cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .token-widget:hover { border-color: #4f5b82; background: #111420; }
+  .tw-col { display: flex; flex-col; }
+  .tw-label { font-size: 9.5px; text-transform: uppercase; color: var(--muted); font-weight: 700; letter-spacing: 0.05em; display: flex; align-items: center; gap: 5px; }
+  .tw-val { font-size: 12px; font-weight: 700; color: #e2e8f0; font-family: ui-monospace, monospace; margin-top: 1px; }
+  .tw-bar { width: 72px; height: 6px; background: #1c2030; border-radius: 999px; overflow: hidden; margin-top: 3px; }
+  .tw-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #3b82f6, #10b981); }
+  .tw-cache {
+    background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #34d399; font-size: 11px; padding: 3px 8px; border-radius: 6px; font-weight: 600;
+    display: flex; align-items: center; gap: 4px;
+  }
+
+  /* Modal/Drawer Container */
+  .modal-preview {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+    max-width: 900px; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-soft); padding-bottom: 16px; margin-bottom: 20px; }
+  .modal-title { font-size: 16px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }
+  .close-btn { color: var(--muted); cursor: pointer; font-size: 16px; }
+
+  /* KPI Cards Grid */
+  .grid-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
+  .kpi-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; position: relative; overflow: hidden;
+  }
+  .kpi-title { font-size: 11px; color: var(--muted); text-transform: uppercase; font-weight: 700; letter-spacing: 0.04em; }
+  .kpi-num { font-size: 22px; font-weight: 800; font-family: ui-monospace, monospace; color: #fff; margin: 6px 0 8px; }
+  .kpi-num small { font-size: 13px; color: var(--muted); font-weight: 500; }
+  .progress-bg { width: 100%; height: 7px; background: #0c0e14; border-radius: 999px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 999px; }
+  .fill-green { background: #10b981; }
+  .fill-amber { background: #f59e0b; }
+  .fill-purple { background: #a855f7; }
+  .kpi-sub { font-size: 11px; color: var(--muted); margin-top: 8px; display: flex; justify-content: space-between; }
+
+  /* Model Distribution Band */
+  .split-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px; margin-bottom: 24px;
+  }
+  .split-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .split-title { font-size: 13px; font-weight: 700; color: #e2e8f0; }
+  .split-bar-wrap { display: flex; height: 12px; border-radius: 999px; overflow: hidden; margin-bottom: 14px; background: #0c0e14; }
+  .bar-agy { background: var(--agy); height: 100%; transition: width 0.3s; }
+  .bar-claude { background: var(--claude); height: 100%; transition: width 0.3s; }
+  .models-legend { display: flex; gap: 24px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot-agy { background: var(--agy); }
+  .dot-claude { background: var(--claude); }
+  .model-tokens { font-family: ui-monospace, monospace; color: #fff; font-weight: 600; margin-left: 4px; }
+
+  /* Explanation / How it saves tokens */
+  .saving-box {
+    background: #0f131d; border: 1px solid #1e2638; border-radius: 12px;
+    padding: 18px; margin-bottom: 24px;
+  }
+  .saving-title { font-size: 13px; font-weight: 700; color: #60a5fa; margin-bottom: 12px; display: flex; align-items: center; gap: 7px; }
+  .pillars-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .pillar-item {
+    background: #141824; border: 1px solid #222b40; border-radius: 8px; padding: 12px;
+  }
+  .pillar-head { font-size: 12px; font-weight: 700; color: #e2e8f0; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .pillar-desc { font-size: 11px; color: var(--muted); line-height: 1.45; }
+
+  /* Settings Controls */
+  .limits-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px;
+  }
+  .limits-title { font-size: 13px; font-weight: 700; color: #e2e8f0; margin-bottom: 14px; }
+  .form-row { display: flex; gap: 16px; align-items: flex-end; }
+  .form-group { flex: 1; }
+  .form-label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+  .form-input {
+    width: 100%; background: #090a0f; border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 12px; font-size: 12px; font-family: ui-monospace, monospace; color: #fff;
+    outline: none;
+  }
+  .form-input:focus { border-color: #3b82f6; }
+  .save-btn {
+    background: #2563eb; color: #fff; border: none; padding: 9px 18px; border-radius: 8px;
+    font-size: 12px; font-weight: 600; cursor: pointer; height: 38px;
+  }
+  .save-btn:hover { background: #1d4ed8; }
+</style>
+</head>
+<body>
+
+<div class="mockbar">
+  <div>
+    <strong>Mockup Interativo de Design:</strong> Telemetria Real de Tokens, Gestão de Limites e Economia
+  </div>
+  <span class="tag">Para Avaliação e Alinhamento</span>
+</div>
+
+<!-- PARTE 1: COMO FICA NA BARRA SUPERIOR -->
+<div class="preview-section">
+  <div class="section-title">1. Como aparecerá no topo do Agent Orchestrator (Topbar sempre visível)</div>
+  <div class="topbar-mock">
+    <div class="topbar-left">
+      <div class="logo">
+        <div class="logo-box">AO</div>
+        <div>
+          <div>Agent Orchestrator</div>
+          <div style="font-size:10px; color:var(--muted); font-weight:normal;">Local-First Multi-Agent Engine</div>
+        </div>
+      </div>
+      <span style="color:#334155; margin:0 8px;">|</span>
+      <span style="font-size:12px; color:var(--muted);">Projeto: <strong style="color:#fff;">Patrimonio</strong></span>
+    </div>
+
+    <!-- O NOVO WIDGET DE TOKENS -->
+    <div class="token-widget" title="Clique para abrir detalhes completos de consumo e limites">
+      <div>
+        <div class="tw-label">⚡ Cota Diária de Tokens</div>
+        <div class="tw-val">64.2k <span style="font-size:10px; color:var(--muted); font-weight:normal;">/ 200k (32%)</span></div>
+        <div class="tw-bar"><div class="tw-fill" style="width: 32%;"></div></div>
+      </div>
+      <div class="tw-cache">
+        <span>🟢 Cache: 18.5k poupados</span>
+      </div>
+      <div style="border-left: 1px solid #2d344a; height: 26px; margin: 0 2px;"></div>
+      <div style="font-size: 11px; color: #93c5fd; font-weight: 600;">
+        📊 Ver Detalhes
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PARTE 2: MODAL COMPLETO DE TELEMETRIA -->
+<div class="preview-section">
+  <div class="section-title">2. Modal Detalhado (Aberto ao clicar no widget acima)</div>
+  
+  <div class="modal-preview">
+    <div class="modal-head">
+      <div class="modal-title">
+        <span>📊</span>
+        <span>Telemetria de Tokens & Gestão de Limites</span>
+      </div>
+      <div class="close-btn">✕</div>
+    </div>
+
+    <!-- CARDS DE METRICAS PRINCIPAIS -->
+    <div class="grid-kpis">
+      <!-- Cota Diária -->
+      <div class="kpi-card">
+        <div class="kpi-title">📅 Consumo Hoje</div>
+        <div class="kpi-num">64.2k <small>/ 200k</small></div>
+        <div class="progress-bg">
+          <div class="progress-fill fill-green" style="width: 32%;"></div>
+        </div>
+        <div class="kpi-sub">
+          <span>32% utilizado</span>
+          <span>135.8k restantes hoje</span>
+        </div>
+      </div>
+
+      <!-- Cota Mensal -->
+      <div class="kpi-card">
+        <div class="kpi-title">🗓️ Consumo no Mês (Outubro)</div>
+        <div class="kpi-num">842k <small>/ 3.0M</small></div>
+        <div class="progress-bg">
+          <div class="progress-fill fill-purple" style="width: 28%;"></div>
+        </div>
+        <div class="kpi-sub">
+          <span>28% utilizado</span>
+          <span>2.15M restantes no ciclo</span>
+        </div>
+      </div>
+
+      <!-- Economia de Cache -->
+      <div class="kpi-card">
+        <div class="kpi-title">⚡ Economia por Cache Real</div>
+        <div class="kpi-num" style="color: #34d399;">238k <small>tokens</small></div>
+        <div class="progress-bg">
+          <div class="progress-fill fill-green" style="width: 100%; opacity: 0.6;"></div>
+        </div>
+        <div class="kpi-sub">
+          <span>~22% do contexto reaproveitado</span>
+          <span>Zero reprocessamento</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONSUMO POR MODELO (ANTIGRAVITY CLI vs CLAUDE CLI) -->
+    <div class="split-card">
+      <div class="split-header">
+        <div class="split-title">Divisão de Consumo por CLI (Antigravity vs Claude)</div>
+        <span style="font-size: 11px; color: var(--muted);">Baseado nas tarefas despachadas</span>
+      </div>
+      
+      <div class="split-bar-wrap">
+        <div class="bar-agy" style="width: 58%;" title="Antigravity CLI: 58%"></div>
+        <div class="bar-claude" style="width: 42%;" title="Claude CLI: 42%"></div>
+      </div>
+
+      <div class="models-legend">
+        <div class="legend-item">
+          <span class="dot dot-agy"></span>
+          <span>Antigravity CLI (agy):</span>
+          <span class="model-tokens">488.3k tokens (58%)</span>
+        </div>
+        <div class="legend-item">
+          <span class="dot dot-claude"></span>
+          <span>Claude Code CLI (claude):</span>
+          <span class="model-tokens">353.7k tokens (42%)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- COMO O ORQUESTRADOR ECONOMIZA TOKENS -->
+    <div class="saving-box">
+      <div class="saving-title">
+        <span>🛡️</span>
+        <span>Como o Agent Orchestrator protege e economiza seus tokens na prática:</span>
+      </div>
+      <div class="pillars-grid">
+        <div class="pillar-item">
+          <div class="pillar-head">1. Filtro Seletivo de Arquivos</div>
+          <div class="pillar-desc">
+            Pastas pesadas como <code>node_modules</code>, <code>dist</code>, <code>.git</code> e binários são excluídas do prompt. Isso evita desperdiçar 80k+ tokens lendo arquivos que a IA não precisa.
+          </div>
+        </div>
+
+        <div class="pillar-item">
+          <div class="pillar-head">2. Estrutura Cacheável de Prompt</div>
+          <div class="pillar-desc">
+            Instruções globais e arquitetura do projeto são enviadas como prefixos estáveis. Os CLIs reconhecem o bloco idêntico e lêem direto da memória de cache.
+          </div>
+        </div>
+
+        <div class="pillar-item">
+          <div class="pillar-head">3. Worktree Isolado por Tarefa</div>
+          <div class="pillar-desc">
+            Cada tarefa opera apenas nos arquivos necessários. A IA não se perde em 50 arquivos do projeto todo, focando a atenção nos poucos arquivos relevantes.
+          </div>
+        </div>
+
+        <div class="pillar-item">
+          <div class="pillar-head">4. Alerta de Proteção de Cota</div>
+          <div class="pillar-desc">
+            Se você estiver prestes a atingir seu teto diário configurado, o orquestrador avisa antes de despachar comandos muito longos, permitindo pausar ou podar o histórico.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONFIGURAÇÃO DOS LIMITES DE TOKENS -->
+    <div class="limits-card">
+      <div class="limits-title">⚙️ Ajustar Seus Tetos de Limite de Tokens</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Limite Diário de Tokens</label>
+          <input type="text" class="form-input" value="200.000" placeholder="Ex: 200000">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Limite Mensal de Tokens</label>
+          <input type="text" class="form-input" value="3.000.000" placeholder="Ex: 3000000">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Ação ao atingir 100%</label>
+          <select class="form-input" style="cursor: pointer;">
+            <option>Avisar com alerta visual no painel</option>
+            <option>Pedir confirmação antes de rodar CLI</option>
+          </select>
+        </div>
+        <button class="save-btn" onclick="alert('Configurações de limite salvas com sucesso!')">Salvar Tetos</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

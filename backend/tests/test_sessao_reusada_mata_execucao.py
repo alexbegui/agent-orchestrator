@@ -13,6 +13,7 @@ B) "Error: -p took "--dangerously-skip-permissions" as its prompt, so the
    O agy lê o argumento seguinte a -p como sendo o prompt. Com a flag logo
    depois de -p, a tarefa real era descartada — o motor agy nunca funcionou.
 """
+from unittest.mock import patch
 from app.services.runner_service import RunnerService
 
 
@@ -59,9 +60,10 @@ def test_primeira_execucao_ainda_cria_a_sessao():
 def test_agy_nao_perde_o_prompt_para_a_flag_de_permissao():
     """O agy toma o argumento seguinte a -p como prompt; a flag não pode estar ali."""
     runner = RunnerService()
-    cmd = runner.resolve_cli_command(
-        "SUBPROCESS_CLI", "esta funcionando ?", {"cli": "agy"}
-    )
+    with patch.object(runner, "_agy_padrao", return_value="agy"):
+        cmd = runner.resolve_cli_command(
+            "SUBPROCESS_CLI", "esta funcionando ?", {"cli": "agy"}
+        )
 
     # Duas formas válidas de entregar o prompt: anexado à flag (-p=<prompt>),
     # que é a que o próprio CLI recomenda, ou como argumento logo depois de -p.

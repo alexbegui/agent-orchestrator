@@ -2,13 +2,19 @@ import { useState, useEffect, useRef } from 'react';
 import { Message } from '../types';
 
 interface WebSocketPayload {
-  type: 'LOG' | 'STATUS' | 'ERROR' | 'MESSAGE';
+  type: 'LOG' | 'STATUS' | 'ERROR' | 'MESSAGE' | 'MESSAGE_CHUNK';
   content?: string;
   status?: string;
   message?: Message;
+  chunk?: string;
+  task_id?: string;
 }
 
-export function useTaskWebSocket(taskId: string | null, onNewMessage?: (msg: Message) => void) {
+export function useTaskWebSocket(
+  taskId: string | null,
+  onNewMessage?: (msg: Message) => void,
+  onChunk?: (chunk: string) => void
+) {
   const [logs, setLogs] = useState<string[]>([]);
   const [taskStatus, setTaskStatus] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -39,6 +45,10 @@ export function useTaskWebSocket(taskId: string | null, onNewMessage?: (msg: Mes
         } else if (payload.type === 'MESSAGE' && payload.message) {
           if (onNewMessage) {
             onNewMessage(payload.message);
+          }
+        } else if (payload.type === 'MESSAGE_CHUNK' && payload.chunk) {
+          if (onChunk) {
+            onChunk(payload.chunk);
           }
         }
       } catch (err) {

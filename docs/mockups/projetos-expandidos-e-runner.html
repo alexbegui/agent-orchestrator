@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Sidebar de Alta Capacidade & Botão Rodar Projeto</title>
+<style>
+  :root {
+    --bg: #090a0f;
+    --panel: #12141c;
+    --card: #1a1d28;
+    --card-hover: #222636;
+    --bd: #262a3b;
+    --bd-focus: #3b82f6;
+    --mut: #8a93a8;
+    --blue: #3b82f6;
+    --blue-bg: rgba(59, 130, 246, 0.12);
+    --emerald: #10b981;
+    --emerald-bg: rgba(16, 185, 129, 0.12);
+    --amber: #f59e0b;
+    --amber-bg: rgba(245, 158, 11, 0.12);
+    --rose: #f43f5e;
+    --purple: #a855f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: #f1f5f9;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-size: 13px;
+  }
+
+  /* Banner de Mockup */
+  .mock-banner {
+    background: #171c2b;
+    border-bottom: 1px solid #2e3752;
+    padding: 7px 18px;
+    font-size: 11.5px;
+    color: #93c5fd;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .mock-banner b { color: #fff; }
+  .badge-feat {
+    background: #1e3a5f;
+    color: #60a5fa;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  /* Topbar */
+  header {
+    height: 52px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--bd);
+    padding: 0 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .logo-box {
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
+    background: var(--blue-bg);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    color: #60a5fa;
+    font-size: 12px;
+  }
+  .brand-text h1 {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+  .brand-text span {
+    font-size: 10px;
+    color: var(--mut);
+    display: block;
+  }
+  .top-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .btn-top {
+    background: #1a1d28;
+    border: 1px solid #2d344d;
+    color: #cbd5e1;
+    padding: 6px 12px;
+    border-radius: 7px;
+    font-size: 11.5px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .btn-new-task {
+    background: var(--blue);
+    border: 1px solid #2563eb;
+    color: #fff;
+    padding: 6px 14px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Layout Principal */
+  .main-layout {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ========================================================
+     SIDEBAR DE ALTA CAPACIDADE (PROJETOS EXPANDIDOS)
+     ======================================================== */
+  aside.sidebar {
+    width: 310px; /* Aumentado de 256px para 310px para mais conforto */
+    background: var(--panel);
+    border-right: 1px solid var(--bd);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .sidebar-header {
+    padding: 14px 14px 10px;
+    border-bottom: 1px solid var(--bd);
+  }
+  .sidebar-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .sidebar-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--mut);
+  }
+  .sidebar-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-icon-subtle {
+    background: transparent;
+    border: none;
+    color: var(--mut);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+  }
+  .btn-icon-subtle:hover {
+    background: #1f2436;
+    color: #fff;
+  }
+
+  /* Campo de busca de projetos */
+  .search-box {
+    position: relative;
+    margin-top: 6px;
+  }
+  .search-box input {
+    width: 100%;
+    background: #090a0f;
+    border: 1px solid #232738;
+    border-radius: 6px;
+    padding: 6px 10px 6px 28px;
+    color: #fff;
+    font-size: 11.5px;
+    outline: none;
+  }
+  .search-box input:focus {
+    border-color: var(--bd-focus);
+  }
+  .search-box .ic-search {
+    position: absolute;
+    left: 8px;
+    top: 7px;
+    color: #64748b;
+    font-size: 12px;
+  }
+
+  /* Lista de projetos ocupando o flex-1 da sidebar */
+  .project-list-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .project-list-container::-webkit-scrollbar {
+    width: 5px;
+  }
+  .project-list-container::-webkit-scrollbar-thumb {
+    background: #252b3d;
+    border-radius: 4px;
+  }
+
+  /* Card do Projeto na Sidebar */
+  .p-card {
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 9px 10px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    background: #141722;
+  }
+  .p-card:hover {
+    background: #191d2b;
+    border-color: #2e354a;
+  }
+  .p-card.active {
+    background: #192033;
+    border-color: rgba(59, 130, 246, 0.5);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  }
+
+  .p-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .p-name {
+    font-weight: 600;
+    font-size: 12.5px;
+    color: #e2e8f0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .p-card.active .p-name {
+    color: #93c5fd;
+  }
+
+  .p-indicators {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .pill-count {
+    background: rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+    font-size: 10px;
+    font-family: monospace;
+    padding: 1px 6px;
+    border-radius: 999px;
+  }
+  .pill-service-running {
+    background: rgba(16, 185, 129, 0.18);
+    color: #6ee7b7;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .pill-service-running .dot {
+    width: 6px;
+    height: 6px;
+    background: #10b981;
+    border-radius: 50%;
+    box-shadow: 0 0 6px #10b981;
+  }
+  .pill-service-stopped {
+    background: rgba(148, 163, 184, 0.1);
+    color: #94a3b8;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  .p-path {
+    font-size: 10px;
+    color: #64748b;
+    font-family: monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Barra de ações rápida do projeto */
+  .p-card-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 2px;
+    padding-top: 5px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .p-dev-cmd {
+    font-size: 9.5px;
+    color: #94a3b8;
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 140px;
+  }
+
+  /* O NOVO BOTÃO DE RODAR / REINICIAR */
+  .btn-run-service {
+    background: #10b981;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: 3px 8px;
+    font-size: 10.5px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .btn-run-service:hover {
+    background: #059669;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+  }
+  .btn-restart-service {
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #38bdf8;
+    border-radius: 5px;
+    padding: 3px 8px;
+    font-size: 10.5px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .btn-restart-service:hover {
+    background: #0f172a;
+    border-color: #38bdf8;
+    color: #7dd3fc;
+  }
+
+  /* Rodapé compacto da sidebar (Skills recolhíveis) */
+  .sidebar-footer {
+    padding: 10px 12px;
+    border-top: 1px solid var(--bd);
+    background: #0c0e14;
+    font-size: 11px;
+    color: var(--mut);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* ========================================================
+     CONTEÚDO PRINCIPAL (KANBAN E BARRA DE CONTROLE)
+     ======================================================== */
+  main.kanban-view {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px 24px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+  }
+
+  /* Header Contextual do Projeto Selecionado */
+  .project-hero-bar {
+    background: linear-gradient(180deg, #131724 0%, #0f121d 100%);
+    border: 1px solid #23293d;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .hero-left h2 {
+    font-size: 17px;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .hero-left p {
+    font-size: 11.5px;
+    color: var(--mut);
+    margin-top: 3px;
+  }
+  .hero-cmd-badge {
+    background: #090a0f;
+    border: 1px solid #252b3d;
+    padding: 2px 7px;
+    border-radius: 5px;
+    color: #a5b4fc;
+    font-family: monospace;
+    font-size: 11px;
+  }
+
+  /* Grupo de Ações do Projeto no Topo */
+  .project-runner-widget {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #090a0f;
+    border: 1px solid #232a3d;
+    padding: 6px 12px;
+    border-radius: 8px;
+  }
+  .service-status-tag {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  .status-on { color: #34d399; }
+  .status-pulse {
+    width: 8px;
+    height: 8px;
+    background: #10b981;
+    border-radius: 50%;
+    animation: pulse 1.4s infinite;
+  }
+  @keyframes pulse {
+    0% { transform: scale(0.95); opacity: 0.8; }
+    50% { transform: scale(1.3); opacity: 1; }
+    100% { transform: scale(0.95); opacity: 0.8; }
+  }
+
+  .btn-proj-run {
+    background: #10b981;
+    hover: #059669;
+    color: #fff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .btn-proj-stop {
+    background: #e11d48;
+    color: #fff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .btn-proj-restart {
+    background: #1e293b;
+    border: 1px solid #38bdf8;
+    color: #38bdf8;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .btn-proj-restart:hover {
+    background: #0f172a;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+  }
+  .btn-config-cmd {
+    background: transparent;
+    border: 1px solid #2a3147;
+    color: #94a3b8;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .btn-config-cmd:hover {
+    color: #fff;
+    border-color: #475569;
+  }
+
+  /* Kanban Columns */
+  .kanban-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    min-height: 0;
+  }
+  .k-col {
+    background: var(--panel);
+    border: 1px solid var(--bd);
+    border-radius: 9px;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    min-height: 480px;
+  }
+  .k-col-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #1c2030;
+    margin-bottom: 10px;
+  }
+  .k-col-title {
+    font-weight: 700;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .k-col-count {
+    font-size: 10px;
+    font-family: monospace;
+    background: #090a0f;
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--mut);
+  }
+
+  .k-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .k-card {
+    background: var(--card);
+    border: 1px solid var(--bd);
+    border-radius: 7px;
+    padding: 10px 11px;
+    cursor: pointer;
+    border-left: 3px solid #64748b;
+  }
+  .k-card.running { border-left-color: var(--blue); }
+  .k-card.waiting { border-left-color: var(--amber); }
+  .k-card.ready   { border-left-color: var(--purple); }
+  .k-card.done    { border-left-color: var(--emerald); }
+  .k-card.stopped { border-left-color: var(--rose); }
+
+  .k-card-title {
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .k-card-meta {
+    font-size: 10px;
+    color: var(--mut);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* Modal de Configuração de Comando de Inicialização (Simulação) */
+  .cmd-popover {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    background: #161b29;
+    border: 1px solid #3b82f6;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    border-radius: 10px;
+    padding: 16px;
+    width: 380px;
+    font-size: 12px;
+  }
+  .cmd-popover h4 {
+    font-size: 13px;
+    margin-bottom: 6px;
+    color: #60a5fa;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .cmd-popover p {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-bottom: 10px;
+  }
+  .cmd-input {
+    width: 100%;
+    background: #090a0f;
+    border: 1px solid #2a334d;
+    padding: 7px 10px;
+    border-radius: 6px;
+    color: #6ee7b7;
+    font-family: monospace;
+    font-size: 12px;
+    margin-bottom: 10px;
+  }
+</style>
+</head>
+<body>
+
+  <!-- Barra de Notificação de Mockup -->
+  <div class="mock-banner">
+    <div>
+      <b>MOCKUP PROPOSTO</b> — Sidebar expandida com rolagem flexível + Botão <b>Rodar / Reiniciar Projeto</b> (Opção A)
+    </div>
+    <div style="display:flex; gap:10px;">
+      <span class="badge-feat">✨ Busca & Scroll Infinito</span>
+      <span class="badge-feat">⚡ Restart Automático</span>
+    </div>
+  </div>
+
+  <!-- Topbar -->
+  <header>
+    <div class="brand">
+      <div class="logo-box">AO</div>
+      <div class="brand-text">
+        <h1>Agent Orchestrator</h1>
+        <span>Local-First Multi-Agent Engine</span>
+      </div>
+    </div>
+    <div class="top-right">
+      <button class="btn-top">✨ Antigravity Pro Ativo</button>
+      <button class="btn-top">⟳ Sincronizar Todas</button>
+      <button class="btn-new-task">+ Nova Tarefa</button>
+    </div>
+  </header>
+
+  <!-- Corpo Principal -->
+  <div class="main-layout">
+
+    <!-- ============================================== -->
+    <!-- 1. SIDEBAR EXPANDIDA COM ESPAÇO PARA PROJETOS -->
+    <!-- ============================================== -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title-row">
+          <span class="sidebar-label">Meus Projetos (12)</span>
+          <div class="sidebar-actions">
+            <button class="btn-icon-subtle" title="Adicionar novo projeto" style="font-weight:bold; font-size:14px;">+</button>
+          </div>
+        </div>
+        <!-- Barra de busca rápida para dezenas de projetos -->
+        <div class="search-box">
+          <span class="ic-search">🔍</span>
+          <input type="text" placeholder="Filtrar projetos por nome..." value="" />
+        </div>
+      </div>
+
+      <!-- Container scrollável ocupando 100% da altura restante -->
+      <div class="project-list-container">
+
+        <!-- Projeto 1: ATIVO e RODANDO -->
+        <div class="p-card active">
+          <div class="p-card-top">
+            <span class="p-name">📁 Patrimonio</span>
+            <div class="p-indicators">
+              <span class="pill-service-running"><span class="dot"></span> Online</span>
+              <span class="pill-count">2 tarefas</span>
+            </div>
+          </div>
+          <span class="p-path">D:\Projetos\Patrimonio</span>
+          <div class="p-card-actions">
+            <span class="p-dev-cmd" title="dotnet run --project ...">dotnet run</span>
+            <!-- Botão de Reiniciar direto na barra lateral -->
+            <button class="btn-restart-service" title="Parar processo atual e subir novamente">
+              ⟳ Reiniciar
+            </button>
+          </div>
+        </div>
+
+        <!-- Projeto 2: PARADO (Pronto para rodar) -->
+        <div class="p-card">
+          <div class="p-card-top">
+            <span class="p-name">📁 agent-orchestrator</span>
+            <div class="p-indicators">
+              <span class="pill-service-stopped">Parado</span>
+              <span class="pill-count">3</span>
+            </div>
+          </div>
+          <span class="p-path">C:\Users\alex.asbp\.gemini\antigravity\...</span>
+          <div class="p-card-actions">
+            <span class="p-dev-cmd">npm run dev</span>
+            <button class="btn-run-service" title="Rodar projeto">
+              ▶ Rodar
+            </button>
+          </div>
+        </div>
+
+        <!-- Projeto 3 -->
+        <div class="p-card">
+          <div class="p-card-top">
+            <span class="p-name">📁 Oxy-Integrador-API</span>
+            <div class="p-indicators">
+              <span class="pill-service-running"><span class="dot"></span> Online</span>
+              <span class="pill-count">0</span>
+            </div>
+          </div>
+          <span class="p-path">D:\Projetos\Oxy-Integrador</span>
+          <div class="p-card-actions">
+            <span class="p-dev-cmd">docker compose up</span>
+            <button class="btn-restart-service">⟳ Reiniciar</button>
+          </div>
+        </div>
+
+        <!-- Projeto 4 -->
+        <div class="p-card">
+          <div class="p-card-top">
+            <span class="p-name">📁 PMFI.DesignSystem</span>
+            <div class="p-indicators">
+              <span class="pill-service-stopped">Parado</span>
+            </div>
+          </div>
+          <span class="p-path">D:\Projetos\DesignSystem</span>
+          <div class="p-card-actions">
+            <span class="p-dev-cmd">dotnet build</span>
+            <button class="btn-run-service">▶ Rodar</button>
+          </div>
+        </div>
+
+        <!-- Projeto 5 -->
+        <div class="p-card">
+          <div class="p-card-top">
+            <span class="p-name">📁 Keycloak-Auth-Service</span>
+            <div class="p-indicators">
+              <span class="pill-service-stopped">Parado</span>
+            </div>
+          </div>
+          <span class="p-path">D:\Projetos\Keycloak</span>
+          <div class="p-card-actions">
+            <span class="p-dev-cmd">docker compose up</span>
+            <button class="btn-run-service">▶ Rodar</button>
+          </div>
+        </div>
+
+        <!-- Projeto 6 -->
+        <div class="p-card">
+          <div class="p-card-top">
+            <span class="p-name">📁 Inventario-Mobile-PWA</span>
+            <div class="p-indicators">
+              <span class="pill-service-stopped">Parado</span>
+            </div>
+          </div>
+          <span class="p-path">D:\Projetos\Patrimonio\PWA</span>
+          <div class="p-card-actions">
+            <span class="p-dev-cmd">npm start</span>
+            <button class="btn-run-service">▶ Rodar</button>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="sidebar-footer">
+        <span>⚙️ Skills & Harness (3 ativas)</span>
+        <span style="color:#60a5fa; cursor:pointer;">expandir ▾</span>
+      </div>
+    </aside>
+
+    <!-- ============================================== -->
+    <!-- 2. KANBAN COM BARRA DE CONTROLE DO PROJETO     -->
+    <!-- ============================================== -->
+    <main class="kanban-view">
+
+      <!-- Barra de Controle do Projeto Selecionado -->
+      <div class="project-hero-bar">
+        <div class="hero-left">
+          <h2>
+            Patrimonio
+            <span class="hero-cmd-badge">dotnet run --project Inventory.API</span>
+          </h2>
+          <p>D:\Projetos\Patrimonio · Ramo base: <b>desenvolvimento</b> · 2 tarefas ativas</p>
+        </div>
+
+        <!-- WIDGET DE EXECUÇÃO / REINICIALIZAÇÃO DO PROJETO -->
+        <div class="project-runner-widget">
+          <div class="service-status-tag status-on">
+            <span class="status-pulse"></span>
+            <span>Serviço Rodando (PID 18420)</span>
+          </div>
+
+          <!-- BOTÃO QUE PARA E SOBE NOVAMENTE -->
+          <button class="btn-proj-restart" title="Envia sinal de encerramento para a porta/processo atual e executa o comando de subida">
+            ⟳ Parar & Subir Novamente
+          </button>
+
+          <button class="btn-proj-stop" title="Interromper execução do projeto">
+            ⏹ Parar
+          </button>
+
+          <button class="btn-config-cmd" title="Configurar comando de inicialização deste projeto">
+            ⚙️
+          </button>
+        </div>
+      </div>
+
+      <!-- Grid de 5 Colunas do Kanban -->
+      <div class="kanban-grid">
+
+        <!-- 1. Executando -->
+        <div class="k-col" style="border-top: 3px solid #3b82f6;">
+          <div class="k-col-header">
+            <span class="k-col-title" style="color:#60a5fa;">⚡ Executando</span>
+            <span class="k-col-count">1</span>
+          </div>
+          <div class="k-cards">
+            <div class="k-card running">
+              <div class="k-card-title">Sincronização em tempo real de baixas</div>
+              <div class="k-card-meta">
+                <span>Antigravity (agentapi)</span>
+                <span style="color:#60a5fa;">há 4m</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Te Perguntou -->
+        <div class="k-col" style="border-top: 3px solid #f59e0b;">
+          <div class="k-col-header">
+            <span class="k-col-title" style="color:#fbbf24;">💬 Te Perguntou</span>
+            <span class="k-col-count">1</span>
+          </div>
+          <div class="k-cards">
+            <div class="k-card waiting">
+              <div class="k-card-title">Validação de ID de Unidade no Oxy</div>
+              <div class="k-card-meta">
+                <span>Aguardando resposta</span>
+                <span style="color:#fcd34d;">há 12m</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Entregou -->
+        <div class="k-col" style="border-top: 3px solid #a855f7;">
+          <div class="k-col-header">
+            <span class="k-col-title" style="color:#c084fc;">📦 Entregou</span>
+            <span class="k-col-count">0</span>
+          </div>
+          <div style="font-size:11px; color:#64748b; text-align:center; padding:20px 0;">
+            Nenhuma entrega aguardando aprovação
+          </div>
+        </div>
+
+        <!-- 4. Parou -->
+        <div class="k-col" style="border-top: 3px solid #f43f5e;">
+          <div class="k-col-header">
+            <span class="k-col-title" style="color:#fb7185;">🔴 Parou</span>
+            <span class="k-col-count">0</span>
+          </div>
+          <div style="font-size:11px; color:#64748b; text-align:center; padding:20px 0;">
+            Nenhuma tarefa interrompida
+          </div>
+        </div>
+
+        <!-- 5. Concluído -->
+        <div class="k-col" style="border-top: 3px solid #10b981;">
+          <div class="k-col-header">
+            <span class="k-col-title" style="color:#34d399;">✅ Concluído</span>
+            <span class="k-col-count">1</span>
+          </div>
+          <div class="k-cards">
+            <div class="k-card done">
+              <div class="k-card-title">Bens Baixados</div>
+              <div class="k-card-meta">
+                <span>Mergeado em desenvolvimento</span>
+                <span style="color:#34d399;">concluído</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Janela Pop-up Explicativa (Como o comando funciona) -->
+  <div class="cmd-popover">
+    <h4>⚙️ Como funciona o botão "Parar & Subir"?</h4>
+    <p>Cada projeto tem um comando configurado (ex: <code>dotnet run</code>, <code>npm run dev</code> ou <code>docker compose restart</code>). Ao clicar em <b>Reiniciar</b>:</p>
+    <div style="font-size:11px; color:#cbd5e1; line-height:1.5; margin-bottom:8px;">
+      1. Se o processo já estiver ativo (ou a porta ocupada), ele encerra o PID anterior.<br>
+      2. Dispara o comando na pasta raiz do projeto em segundo plano.<br>
+      3. O indicador fica verde <b>Online</b> com o PID ativo.
+    </div>
+  </div>
+
+</body>
+</html>

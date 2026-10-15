@@ -117,3 +117,24 @@ def test_motivo_real_da_falha_chega_na_tela(client, tarefa, monkeypatch):
     resp = client.post(f"/api/tasks/{tarefa['id']}/refine")
 
     assert "401" in resp.json()["detail"]
+
+
+def test_refino_rota_repassa_target_files_e_fast_mode(client, tarefa, monkeypatch):
+    chamada_kwargs = {}
+
+    async def refinar_espiando(*args, **kwargs):
+        from app.services.refiner_service import RefinedSpec
+        chamada_kwargs.update(kwargs)
+        return RefinedSpec(target_files=kwargs.get("target_files") or ["app.py"], **SPEC_DA_IA)
+
+    monkeypatch.setattr(rotas_tarefas.refiner_service, "refinar", refinar_espiando)
+
+    resp = client.post(
+        f"/api/tasks/{tarefa['id']}/refine",
+        json={"target_files": ["app.py"], "fast_mode": True}
+    )
+
+    assert resp.status_code == 200
+    assert chamada_kwargs.get("target_files") == ["app.py"]
+    assert chamada_kwargs.get("fast_mode") is True
+

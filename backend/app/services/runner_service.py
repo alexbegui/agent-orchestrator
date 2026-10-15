@@ -112,9 +112,9 @@ class RunnerService:
 
             # O `agy` é o CLI independente: não exige o IDE aberto nem token CSRF.
             agy = self._agy_padrao()
-            # Se agy foi selecionado ou estiver instalado
-            if "agy" in cli_choice or agy:
-                cmd_bin = agy or "agy"
+            # Se agy estiver de fato instalado na máquina, usa agy
+            if agy:
+                cmd_bin = agy
                 args = [cmd_bin, f"-p={prompt}", "--dangerously-skip-permissions"]
                 if conv_id:
                     args += ["--conversation", conv_id]

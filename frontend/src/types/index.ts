@@ -14,6 +14,10 @@ export interface Project {
   name: string;
   root_path: string;
   default_branch: string;
+  dev_command?: string;
+  is_service_running?: boolean;
+  service_pid?: number;
+  access_urls?: string[];
   active_tasks_count: number;
 }
 

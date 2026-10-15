@@ -12,6 +12,7 @@ class Project(Base):
     name = Column(String(255), nullable=False)
     root_path = Column(String(1024), nullable=False)
     default_branch = Column(String(100), default="main")
+    dev_command = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")

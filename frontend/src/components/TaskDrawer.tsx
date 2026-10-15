@@ -98,18 +98,25 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     el.style.height = `${Math.min(el.scrollHeight, MAX_ALTURA_INPUT)}px`;
   }, [inputMsg]);
 
+  const [streamingText, setStreamingText] = useState<string>('');
+
   // Descarta o que não é desta tarefa. O canal já é por task_id, então isto é
   // defesa em profundidade: uma mensagem que chegue por um socket antigo,
   // durante a troca de tarefa, apareceria no chat errado.
   const handleNewMessage = useCallback((incoming: Message) => {
     if (incoming.task_id && incoming.task_id !== task.id) return;
+    setStreamingText('');
     setMessages((prev) => {
       if (prev.some((m) => m.id === incoming.id)) return prev;
       return [...prev, incoming];
     });
   }, [task.id]);
 
-  const { logs, taskStatus } = useTaskWebSocket(task.id, handleNewMessage);
+  const handleChunk = useCallback((chunk: string) => {
+    setStreamingText((prev) => prev + chunk);
+  }, []);
+
+  const { logs, taskStatus } = useTaskWebSocket(task.id, handleNewMessage, handleChunk);
 
   // Carrega histórico de mensagens.
   //
@@ -120,6 +127,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
   useEffect(() => {
     let cancelado = false;
     setMessages([]);
+    setStreamingText('');
     api.getMessages(task.id)
       .then((msgs) => {
         if (!cancelado) setMessages(msgs);
@@ -135,7 +143,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
     if (activeTab === 'chat' && !highlightedMsgId) {
       chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, isSendingMessage, activeTab, highlightedMsgId]);
+  }, [messages, isSendingMessage, activeTab, highlightedMsgId, streamingText]);
 
   const carregarArtefatos = useCallback(() => {
     setLoadingArtifacts(true);
@@ -739,22 +747,42 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
 
               {isSendingMessage && (
                 <div className="flex gap-2.5 justify-start">
-                  <div className="p-3 rounded-xl max-w-[85%] bg-[#1a1d28] border border-blue-500/30 text-blue-300 rounded-tl-none flex items-center gap-2 text-xs">
-                    <Loader2 size={13} className="animate-spin text-blue-400" />
-                    <span>Assistente processando resposta...</span>
+                  <div className="p-3 rounded-xl max-w-[85%] bg-[#1a1d28] border border-blue-500/30 text-slate-200 rounded-tl-none text-xs">
+                    {streamingText ? (
+                      <div>
+                        <div className="text-[10px] text-blue-400 font-mono mb-1.5 flex items-center gap-1.5 font-semibold">
+                          <Loader2 size={11} className="animate-spin text-blue-400" />
+                          <span>Assistente gerando resposta...</span>
+                        </div>
+                        <MarkdownRenderer content={streamingText} />
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 text-blue-300">
+                        <Loader2 size={13} className="animate-spin text-blue-400" />
+                        <span>Assistente processando resposta...</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
               <div ref={chatBottomRef} />
             </div>
 
-            {/* Formulário de Envio com Drag-and-Drop, Cola e Anexos */}
-            <form
-              onSubmit={handleSendMessage}
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-              className="mt-3 pt-3 border-t border-[#262a3b] flex flex-col gap-2"
-            >
+            {/* Formulário de Envio com Drag-and-Drop, Cola e Anexos ou Aviso de Concluída */}
+            {task.status === 'DONE' ? (
+              <div className="mt-3 p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2.5">
+                <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                <span>
+                  Esta tarefa foi <strong>concluída e mergeada</strong>. A conversa foi arquivada e o histórico está preservado em modo de leitura.
+                </span>
+              </div>
+            ) : (
+              <form
+                onSubmit={handleSendMessage}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                className="mt-3 pt-3 border-t border-[#262a3b] flex flex-col gap-2"
+              >
               {/* Chips de Anexos Pendentes */}
               {pendingAttachments.length > 0 && (
                 <div className="flex flex-wrap gap-2 p-2 bg-[#161824] border border-[#252a3c] rounded-lg">
@@ -849,6 +877,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({ task, onClose, onTaskUpd
                 </button>
               </div>
             </form>
+            )}
           </div>
         )}
 

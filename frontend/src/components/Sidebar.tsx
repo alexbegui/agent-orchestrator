@@ -1,6 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Project } from '../types';
-import { Folder, Plus, CheckCircle, ShieldCheck, Pencil, X, Loader2, Layers, Terminal as TerminalIcon } from 'lucide-react';
+import {
+  Folder,
+  Plus,
+  ShieldCheck,
+  Pencil,
+  X,
+  Loader2,
+  Layers,
+  Terminal as TerminalIcon,
+  Search,
+  Play,
+  RotateCw,
+  Square,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
 import { api } from '../services/api';
 
 interface SidebarProps {
@@ -20,7 +35,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [editName, setEditName] = useState('');
+  const [editDevCmd, setEditDevCmd] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [skillsExpanded, setSkillsExpanded] = useState(false);
+  const [runningActionProjectId, setRunningActionProjectId] = useState<string | null>(null);
+
+  // Filtragem instantânea de projetos pelo nome ou caminho
+  const filteredProjects = useMemo(() => {
+    if (!searchQuery.trim()) return projects;
+    const q = searchQuery.toLowerCase();
+    return projects.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.root_path.toLowerCase().includes(q)
+    );
+  }, [projects, searchQuery]);
 
   const handleOpenTerminal = async (project: Project) => {
     try {
@@ -30,12 +58,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleSaveProjectName = async (e: React.FormEvent) => {
+  const handleToggleOrRestartService = async (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    setRunningActionProjectId(project.id);
+    try {
+      if (project.is_service_running) {
+        // Se estiver rodando, reinicia
+        const res = await api.restartProjectService(project.id);
+        if (onProjectUpdated) {
+          onProjectUpdated({ ...project, is_service_running: res.is_running, service_pid: res.pid });
+        }
+      } else {
+        // Se estiver parado, inicia
+        const res = await api.startProjectService(project.id);
+        if (onProjectUpdated) {
+          onProjectUpdated({ ...project, is_service_running: res.is_running, service_pid: res.pid });
+        }
+      }
+    } catch (err: any) {
+      alert(`⚠️ Falha ao gerenciar serviço: ${err.message || 'Erro de execução'}`);
+    } finally {
+      setRunningActionProjectId(null);
+    }
+  };
+
+  const handleSaveProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingProject || !editName.trim() || isSaving) return;
     setIsSaving(true);
     try {
-      const updated = await api.updateProject(editingProject.id, { name: editName.trim() });
+      const updated = await api.updateProject(editingProject.id, {
+        name: editName.trim(),
+        dev_command: editDevCmd.trim(),
+      });
       if (onProjectUpdated) {
         onProjectUpdated(updated);
       }
@@ -48,137 +103,213 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <aside className="w-64 border-r border-[#262a3b] bg-[#12141c] flex flex-col shrink-0">
-      <div className="p-4 border-b border-[#262a3b]">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-semibold text-[#8a93a8] uppercase tracking-wider">Projetos</span>
+    <aside className="w-80 border-r border-[#262a3b] bg-[#12141c] flex flex-col shrink-0">
+      {/* Header com Contagem, Botão Novo e Barra de Busca */}
+      <div className="p-3.5 border-b border-[#262a3b]">
+        <div className="flex items-center justify-between mb-2.5">
+          <span className="text-xs font-semibold text-[#8a93a8] uppercase tracking-wider">
+            Projetos ({projects.length})
+          </span>
           <button
             onClick={onOpenNewProject}
             className="p-1 hover:bg-[#1a1d28] rounded text-[#8a93a8] hover:text-white transition"
-            title="Novo Projeto"
+            title="Adicionar Novo Projeto"
           >
-            <Plus size={14} />
+            <Plus size={15} />
           </button>
         </div>
-        <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scroll pr-1">
-          <div
-            onClick={() => onSelectProject('__ALL__')}
-            className={`w-full text-left p-2.5 rounded-lg border transition flex items-center gap-2 cursor-pointer ${
-              activeProjectId === '__ALL__'
-                ? 'bg-[#1a1d28] border-amber-500/50 text-white'
-                : 'border-transparent text-[#8a93a8] hover:bg-[#1a1d28] hover:text-white'
-            }`}
-          >
-            <Layers size={13} className="shrink-0" />
-            <span className="font-medium text-xs">Todos os projetos</span>
-          </div>
 
-          {projects.map((p) => {
+        {/* Input de Filtro Instantâneo para muitos projetos */}
+        <div className="relative">
+          <Search size={13} className="absolute left-2.5 top-2.5 text-slate-500" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Filtrar projetos por nome..."
+            className="w-full bg-[#090a0f] border border-[#232738] focus:border-blue-500 rounded-lg pl-8 pr-7 py-1.5 text-xs text-white outline-none transition"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-2 text-slate-500 hover:text-white"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Lista de Projetos (100% da altura flexível) */}
+      <div className="flex-1 overflow-y-auto custom-scroll p-2 space-y-1.5">
+        {/* Item Global: Todos os Projetos */}
+        <div
+          onClick={() => onSelectProject('__ALL__')}
+          className={`w-full text-left p-2.5 rounded-lg border transition flex items-center gap-2 cursor-pointer ${
+            activeProjectId === '__ALL__'
+              ? 'bg-[#1a1d28] border-amber-500/50 text-white'
+              : 'border-transparent text-[#8a93a8] hover:bg-[#1a1d28] hover:text-white'
+          }`}
+        >
+          <Layers size={14} className="shrink-0 text-amber-400" />
+          <span className="font-medium text-xs">Visão Global (Todos os Projetos)</span>
+        </div>
+
+        {filteredProjects.length === 0 ? (
+          <div className="text-center py-6 text-xs text-slate-500">
+            Nenhum projeto encontrado para "{searchQuery}"
+          </div>
+        ) : (
+          filteredProjects.map((p) => {
             const isActive = p.id === activeProjectId;
+            const isActing = runningActionProjectId === p.id;
+            const isOnline = !!p.is_service_running;
+
             return (
               <div
                 key={p.id}
                 onClick={() => onSelectProject(p.id)}
-                className={`group relative w-full text-left p-2.5 rounded-lg border transition flex items-center justify-between cursor-pointer ${
+                className={`group relative w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1.5 cursor-pointer ${
                   isActive
-                    ? 'bg-[#1a1d28] border-blue-500/40 text-white'
-                    : 'border-transparent text-[#8a93a8] hover:bg-[#1a1d28] hover:text-white'
+                    ? 'bg-[#181f33] border-blue-500/50 text-white shadow-sm'
+                    : 'bg-[#141620] border-transparent text-[#8a93a8] hover:bg-[#1a1d28] hover:text-white'
                 }`}
               >
-                <div className="truncate mr-2 flex-1">
-                  <div className="font-medium text-xs truncate flex items-center gap-1.5">
-                    <span>{p.name}</span>
+                {/* Linha 1: Nome, Status do Serviço e Contador */}
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="font-medium text-xs truncate flex items-center gap-1.5 flex-1">
+                    <Folder size={13} className={isActive ? 'text-blue-400' : 'text-slate-400'} />
+                    <span className="truncate">{p.name}</span>
                   </div>
-                  <div className="text-[10px] text-[#8a93a8] truncate">{p.root_path}</div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Badge Online/Parado */}
+                    {isOnline ? (
+                      <span className="flex items-center gap-1 text-[9px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Online
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-slate-500 bg-slate-800/80 px-1.5 py-0.5 rounded">
+                        Parado
+                      </span>
+                    )}
+
+                    {p.active_tasks_count > 0 && (
+                      <span className="text-[9px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded-full font-mono">
+                        {p.active_tasks_count}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {p.active_tasks_count > 0 && (
-                    <span className="text-[10px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded-full font-mono">
-                      {p.active_tasks_count}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenTerminal(p);
-                    }}
-                    title={`Abrir terminal em ${p.root_path}`}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[#262a3b] text-[#8a93a8] hover:text-emerald-300 transition"
-                  >
-                    <TerminalIcon size={12} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingProject(p);
-                      setEditName(p.name);
-                    }}
-                    title="Renomear Projeto"
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[#262a3b] text-[#8a93a8] hover:text-blue-300 transition"
-                  >
-                    <Pencil size={12} />
-                  </button>
+
+                {/* Linha 2: Caminho no disco */}
+                <div className="text-[10px] text-slate-500 truncate font-mono">
+                  {p.root_path}
+                </div>
+
+                {/* Linha 3: Barra de Ações Rápidas (Rodar/Reiniciar, Terminal, Editar) */}
+                <div className="flex items-center justify-between pt-1 border-t border-white/5 mt-0.5">
+                  <div className="text-[9px] font-mono text-slate-400 truncate max-w-[150px]" title={p.dev_command || 'Comando padrão'}>
+                    {p.dev_command || 'npm run dev'}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {/* Botão de Rodar ou Reiniciar */}
+                    <button
+                      type="button"
+                      disabled={isActing}
+                      onClick={(e) => handleToggleOrRestartService(e, p)}
+                      title={isOnline ? 'Reiniciar serviço (Parar e subir)' : 'Rodar serviço do projeto'}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 transition ${
+                        isOnline
+                          ? 'bg-blue-950/80 hover:bg-blue-900 border border-blue-500/40 text-blue-300'
+                          : 'bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300'
+                      }`}
+                    >
+                      {isActing ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : isOnline ? (
+                        <>
+                          <RotateCw size={10} />
+                          <span>Reiniciar</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play size={10} />
+                          <span>Rodar</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenTerminal(p);
+                      }}
+                      title={`Abrir terminal em ${p.root_path}`}
+                      className="p-1 rounded hover:bg-[#262a3b] text-[#8a93a8] hover:text-emerald-300 transition"
+                    >
+                      <TerminalIcon size={12} />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingProject(p);
+                        setEditName(p.name);
+                        setEditDevCmd(p.dev_command || '');
+                      }}
+                      title="Configurar Projeto e Comando"
+                      className="p-1 rounded hover:bg-[#262a3b] text-[#8a93a8] hover:text-blue-300 transition"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                  </div>
                 </div>
               </div>
             );
-          })}
-        </div>
+          })
+        )}
       </div>
 
-      {/* Skills & Harnesses Section */}
-      <div className="p-4 flex-1 overflow-y-auto custom-scroll">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-[#8a93a8] uppercase tracking-wider">Harness & Skills</span>
-          <span className="text-[10px] text-emerald-400 font-mono">Ativas</span>
-        </div>
-        <p className="text-[11px] text-[#8a93a8] mb-3 leading-relaxed">
-          Injeção modular por tarefa para máxima economia de tokens:
-        </p>
-        <div className="space-y-2 text-xs">
-          <div className="p-2 rounded bg-[#090a0f] border border-[#1c2030] flex items-center justify-between">
-            <div>
-              <span className="font-medium text-white block">ui-ux-pro-max</span>
-              <span className="text-[10px] text-[#8a93a8]">Acessibilidade e anti-slop</span>
-            </div>
-            <ShieldCheck size={14} className="text-blue-400" />
+      {/* Seção Skills recolhível no rodapé */}
+      <div className="border-t border-[#262a3b] bg-[#0d0f17]">
+        <button
+          type="button"
+          onClick={() => setSkillsExpanded(!skillsExpanded)}
+          className="w-full p-2.5 flex items-center justify-between text-xs text-[#8a93a8] hover:text-white transition"
+        >
+          <span className="font-semibold uppercase tracking-wider text-[10px]">
+            Harness & Skills
+          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-emerald-400 font-mono">3 Ativas</span>
+            {skillsExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
           </div>
-          <div className="p-2 rounded bg-[#090a0f] border border-[#1c2030] flex items-center justify-between">
-            <div>
-              <span className="font-medium text-white block">test-driven-development</span>
-              <span className="text-[10px] text-[#8a93a8]">Ciclos Red-Green-Refactor</span>
+        </button>
+
+        {skillsExpanded && (
+          <div className="p-3 pt-0 space-y-1.5 text-xs animate-in fade-in duration-150">
+            <div className="p-1.5 rounded bg-[#090a0f] border border-[#1c2030] flex items-center justify-between">
+              <span className="text-[11px] text-white">ui-ux-pro-max</span>
+              <ShieldCheck size={13} className="text-blue-400" />
             </div>
-            <ShieldCheck size={14} className="text-emerald-400" />
-          </div>
-          <div className="p-2 rounded bg-[#090a0f] border border-[#1c2030] flex items-center justify-between">
-            <div>
-              <span className="font-medium text-white block">fastapi-standards</span>
-              <span className="text-[10px] text-[#8a93a8]">Pydantic v2 + Async</span>
+            <div className="p-1.5 rounded bg-[#090a0f] border border-[#1c2030] flex items-center justify-between">
+              <span className="text-[11px] text-white">test-driven-development</span>
+              <ShieldCheck size={13} className="text-emerald-400" />
             </div>
-            <ShieldCheck size={14} className="text-purple-400" />
+            <div className="p-1.5 rounded bg-[#090a0f] border border-[#1c2030] flex items-center justify-between">
+              <span className="text-[11px] text-white">fastapi-standards</span>
+              <ShieldCheck size={13} className="text-purple-400" />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Windows Runners Detected */}
-      <div className="p-3 border-t border-[#262a3b] bg-[#090a0f] text-[11px] space-y-1">
-        <div className="text-[10px] text-[#8a93a8] font-semibold uppercase">Ambiente Local (Windows)</div>
-        <div className="flex items-center justify-between text-slate-300">
-          <span>Anthropic Claude Code</span>
-          <span className="text-emerald-400 font-mono text-[10px]">claude.cmd ✓</span>
-        </div>
-        <div className="flex items-center justify-between text-slate-300">
-          <span>Antigravity / Gemini</span>
-          <span className="text-emerald-400 font-mono text-[10px]">agy.exe ✓</span>
-        </div>
-        <div className="flex items-center justify-between text-slate-300">
-          <span>Git Worktrees</span>
-          <span className="text-emerald-400 font-mono text-[10px]">ativo ✓</span>
-        </div>
-      </div>
-
-      {/* Modal: Editar Nome do Projeto */}
+      {/* Modal: Configurar Projeto e Comando */}
       {editingProject && (
         <div
           className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4"
@@ -191,7 +322,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-white text-sm flex items-center gap-2">
                 <Pencil size={15} className="text-blue-400" />
-                Editar Nome do Projeto
+                Configurar Projeto
               </h3>
               <button
                 type="button"
@@ -202,20 +333,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSaveProjectName} className="space-y-4">
+            <form onSubmit={handleSaveProject} className="space-y-3.5">
               <div>
-                <label className="block text-[11px] font-medium text-[#8a93a8] uppercase mb-1.5">
+                <label className="block text-[11px] font-medium text-[#8a93a8] uppercase mb-1">
                   Nome do Projeto
                 </label>
                 <input
                   type="text"
                   required
-                  autoFocus
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   className="w-full bg-[#0c0d13] border border-[#222638] focus:border-blue-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition"
                   placeholder="Ex: Patrimônio"
                 />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-[#8a93a8] uppercase mb-1">
+                  Comando para Rodar o Projeto
+                </label>
+                <input
+                  type="text"
+                  value={editDevCmd}
+                  onChange={(e) => setEditDevCmd(e.target.value)}
+                  className="w-full bg-[#0c0d13] border border-[#222638] focus:border-blue-500 rounded-lg px-3 py-2 text-xs text-emerald-300 font-mono outline-none transition"
+                  placeholder="Ex: dotnet run, npm run dev, docker compose up"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Usado no botão <strong>Parar & Subir Novamente</strong>.
+                </p>
               </div>
 
               <div>
@@ -247,7 +393,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       Salvando...
                     </>
                   ) : (
-                    'Salvar Alterações'
+                    'Salvar'
                   )}
                 </button>
               </div>
@@ -258,4 +404,3 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </aside>
   );
 };
-
