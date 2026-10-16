@@ -121,6 +121,64 @@ class GitWorktreeService:
 
         return "main"
 
+    def generate_branch_name(
+        self,
+        project_name: str,
+        task_title: str,
+        project_path: Optional[str] = None,
+        existing_branches: Optional[list[str]] = None
+    ) -> str:
+        """
+        Gera um nome de branch semântico, limpo e único no formato:
+        `task/<projeto-slug>-<tarefa-slug>`
+        Ex: `task/sigma-criar-no-projeto-certo`
+        Se colidir com uma branch existente, adiciona sufixo numérico: `-2`, `-3`, etc.
+        """
+        import re
+        import unicodedata
+
+        def slugify(text: str) -> str:
+            # Remove acentuação
+            text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+            text = text.lower().strip()
+            # Substitui caracteres não alfanuméricos por hífen
+            text = re.sub(r"[^a-z0-9]+", "-", text)
+            text = re.sub(r"-+", "-", text).strip("-")
+            return text
+
+        p_slug = slugify(project_name or "proj") or "proj"
+        t_slug = slugify(task_title or "task") or "task"
+        # Limita o comprimento do slug da tarefa para não estourar caminhos
+        t_slug = t_slug[:40].rstrip("-")
+        base_name = f"task/{p_slug}-{t_slug}"
+
+        # Carrega branches do repositório local se project_path foi informado
+        conhecidas = set(existing_branches or [])
+        if project_path and os.path.isdir(project_path):
+            try:
+                res = subprocess.run(
+                    ["git", "branch", "--format=%(refname:short)"],
+                    cwd=project_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if res.returncode == 0:
+                    for line in res.stdout.splitlines():
+                        if line.strip():
+                            conhecidas.add(line.strip())
+            except Exception:
+                pass
+
+        if base_name not in conhecidas:
+            return base_name
+
+        # Caso colida, adiciona sufixo numérico (-2, -3, ...)
+        counter = 2
+        while f"{base_name}-{counter}" in conhecidas:
+            counter += 1
+        return f"{base_name}-{counter}"
+
     def get_worktree_path(self, project_path: str, task_id: str) -> str:
         return os.path.abspath(os.path.join(project_path, ".worktrees", f"task-{task_id}"))
 

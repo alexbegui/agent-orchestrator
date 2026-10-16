@@ -683,6 +683,11 @@ def refresh_states(db: Session = Depends(get_db)):
         if desde and (time.time() - desde) >= CHAT_BUSY_TIMEOUT:
             t.runner_config = {k: v for k, v in cfg.items() if k != "chat_busy_since"}
             corrigidas.append({"id": t.id, "title": t.title, "novo_status": "chat destravado"})
+        
+        # Garante vínculo do workspace no Antigravity
+        cid = cfg.get("antigravity_conversation_id")
+        if cid and t.project and t.project.root_path:
+            assistant_service.ensure_conversation_workspace(cid, t.project.root_path)
 
     db.commit()
 
@@ -723,13 +728,22 @@ def create_task(data: TaskCreate, db: Session = Depends(get_db)):
     if not proj:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
 
+    existing_branches = [t.git_branch for t in db.query(Task.git_branch).filter(Task.git_branch.isnot(None)).all()]
+    branch_name = git_service.generate_branch_name(
+        project_name=proj.name,
+        task_title=data.title,
+        project_path=proj.root_path,
+        existing_branches=existing_branches
+    )
+
     task = Task(
         project_id=data.project_id,
         title=data.title,
         raw_prompt=data.raw_prompt,
         status=TaskStatus.DRAFT,
         runner_type=RunnerType(data.runner_type) if data.runner_type in RunnerType._value2member_map_ else RunnerType.SUBPROCESS_CLI,
-        runner_config=data.runner_config or {}
+        runner_config=data.runner_config or {},
+        git_branch=branch_name
     )
     db.add(task)
     db.commit()
@@ -839,11 +853,16 @@ async def _run_task_background(task_id: str, project_path: str, command: list[st
     worktree_path = git_service.get_worktree_path(project_path, task_id)
     conv_id = None
     try:
+        db_init = db_session_factory()
+        t_init = db_init.query(Task).filter(Task.id == task_id).first()
+        branch_name = t_init.git_branch if t_init else None
+        db_init.close()
+
         await ws_manager.broadcast_task(task_id, {
             "type": "LOG",
-            "content": f"[Orchestrator] Inicializando worktree em {worktree_path}"
+            "content": f"[Orchestrator] Inicializando worktree em {worktree_path} (branch: {branch_name or 'padrao'})"
         })
-        git_service.create_worktree(project_path, task_id)
+        git_service.create_worktree(project_path, task_id, branch_name=branch_name)
 
         await ws_manager.broadcast_task(task_id, {
             "type": "STATUS",
@@ -982,11 +1001,20 @@ async def _despachar_proxima_da_fila(db_session_factory):
             if any(k in str(cfg.get("cli", "")).lower() for k in ["agy", "gemini", "antigravity"]) and not cfg.get("antigravity_conversation_id"):
                 cfg["antigravity_conversation_id"] = str(uuid.uuid4())
                 proxima.runner_config = cfg
+            if cfg.get("antigravity_conversation_id") and proxima.project:
+                assistant_service.ensure_conversation_workspace(cfg["antigravity_conversation_id"], proxima.project.root_path)
             cmd = runner_service.resolve_cli_command(proxima.runner_type.value, prompt, cfg)
 
         proxima.status = TaskStatus.RUNNING
         proxima.worktree_path = git_service.get_worktree_path(proxima.project.root_path, proxima.id)
-        proxima.git_branch = f"task/{proxima.id}"
+        if not proxima.git_branch:
+            existing_branches = [t.git_branch for t in db.query(Task.git_branch).filter(Task.git_branch.isnot(None), Task.id != proxima.id).all()]
+            proxima.git_branch = git_service.generate_branch_name(
+                project_name=proxima.project.name,
+                task_title=proxima.title,
+                project_path=proxima.project.root_path,
+                existing_branches=existing_branches
+            )
         db.commit()
 
         asyncio.create_task(
@@ -1075,6 +1103,10 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
         if any(k in str(cfg.get("cli", "")).lower() for k in ["agy", "gemini", "antigravity"]) and not cfg.get("antigravity_conversation_id"):
             cfg["antigravity_conversation_id"] = str(uuid.uuid4())
             task.runner_config = cfg
+
+        if cfg.get("antigravity_conversation_id") and task.project:
+            assistant_service.ensure_conversation_workspace(cfg["antigravity_conversation_id"], task.project.root_path)
+
         cmd = runner_service.resolve_cli_command(task.runner_type.value, prompt, cfg)
 
         # A sessão passa a existir no momento em que o claude é disparado. Sem
@@ -1088,7 +1120,14 @@ def run_task(task_id: str, background_tasks: BackgroundTasks, db: Session = Depe
 
     task.status = TaskStatus.RUNNING
     task.worktree_path = git_service.get_worktree_path(task.project.root_path, task.id)
-    task.git_branch = f"task/{task.id}"
+    if not task.git_branch:
+        existing_branches = [t.git_branch for t in db.query(Task.git_branch).filter(Task.git_branch.isnot(None), Task.id != task.id).all()]
+        task.git_branch = git_service.generate_branch_name(
+            project_name=task.project.name,
+            task_title=task.title,
+            project_path=task.project.root_path,
+            existing_branches=existing_branches
+        )
     db.commit()
     db.refresh(task)
 
@@ -1317,11 +1356,14 @@ async def send_task_message(task_id: str, data: MessageCreate, background_tasks:
 
     # Atualiza conversa Antigravity no runner_config se criada
     conv_id = assistant_service.get_task_conversation_id(task.id)
-    if conv_id and (not task.runner_config or task.runner_config.get("antigravity_conversation_id") != conv_id):
-        cfg = dict(task.runner_config or {})
-        cfg["antigravity_conversation_id"] = conv_id
-        task.runner_config = cfg
-        db.commit()
+    if conv_id:
+        if task.project:
+            assistant_service.ensure_conversation_workspace(conv_id, task.project.root_path)
+        if not task.runner_config or task.runner_config.get("antigravity_conversation_id") != conv_id:
+            cfg = dict(task.runner_config or {})
+            cfg["antigravity_conversation_id"] = conv_id
+            task.runner_config = cfg
+            db.commit()
 
     # Se a tarefa estiver em revisão ou auto_run solicitado, re-executa o agente com o feedback
     if data.auto_run or task.status == TaskStatus.REVIEW_READY:

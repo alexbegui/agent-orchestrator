@@ -16,6 +16,9 @@ if defined HTTP_PROXY (
     if not defined HTTPS_PROXY (
         set HTTPS_PROXY=%HTTP_PROXY%
     )
+    if not defined NO_PROXY (
+        set NO_PROXY=localhost,127.0.0.1
+    )
 )
 
 backend\venv\Scripts\pip.exe install -q -r backend\requirements.txt

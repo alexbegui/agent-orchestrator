@@ -8,6 +8,12 @@ import time
 if os.environ.get("HTTP_PROXY") and not os.environ.get("HTTPS_PROXY"):
     os.environ["HTTPS_PROXY"] = os.environ["HTTP_PROXY"]
 
+# Garante que localhost e 127.0.0.1 não passem pelo proxy corporativo
+no_proxy = os.environ.get("NO_PROXY", "")
+missing_hosts = [h for h in ["localhost", "127.0.0.1"] if h not in no_proxy.split(",")]
+if missing_hosts:
+    os.environ["NO_PROXY"] = ",".join(missing_hosts) + ("," + no_proxy if no_proxy else "")
+
 # Adiciona backend ao PYTHONPATH
 backend_dir = os.path.join(os.path.dirname(__file__), "backend")
 if backend_dir not in sys.path:
@@ -22,8 +28,8 @@ if hasattr(sys.stderr, "reconfigure"):
 
 def open_browser():
     time.sleep(1.2)
-    print("\n[Orchestrator] Abrindo painel no navegador: http://localhost:8000 ...")
-    webbrowser.open("http://localhost:8000")
+    print("\n[Orchestrator] Abrindo painel no navegador: http://127.0.0.1:8000 ...")
+    webbrowser.open("http://127.0.0.1:8000")
 
 
 if __name__ == "__main__":

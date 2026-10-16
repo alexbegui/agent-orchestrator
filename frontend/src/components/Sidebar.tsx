@@ -24,6 +24,7 @@ interface SidebarProps {
   onSelectProject: (id: string) => void;
   onOpenNewProject: () => void;
   onProjectUpdated?: (updated: Project) => void;
+  onProjectsImported?: (imported: Project[]) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -32,6 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectProject,
   onOpenNewProject,
   onProjectUpdated,
+  onProjectsImported,
 }) => {
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [editName, setEditName] = useState('');
@@ -40,6 +42,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [skillsExpanded, setSkillsExpanded] = useState(false);
   const [runningActionProjectId, setRunningActionProjectId] = useState<string | null>(null);
+
+  // Modal de Sincronização / Importação de Projetos do Antigravity
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [discoveredProjects, setDiscoveredProjects] = useState<Array<{ name: string; root_path: string; antigravity_project_id: string; already_imported: boolean }>>([]);
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [selectedToImport, setSelectedToImport] = useState<string[]>([]);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Filtragem instantânea de projetos pelo nome ou caminho
   const filteredProjects = useMemo(() => {
@@ -102,6 +111,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const handleOpenSyncModal = async () => {
+    setIsSyncModalOpen(true);
+    setIsDiscovering(true);
+    try {
+      const data = await api.discoverAntigravityProjects();
+      setDiscoveredProjects(data);
+      // Pré-seleciona os que ainda não foram importados
+      const toImport = data.filter((p) => !p.already_imported).map((p) => p.root_path);
+      setSelectedToImport(toImport);
+    } catch (err: any) {
+      alert(`⚠️ Erro ao buscar projetos do Antigravity: ${err.message || 'Falha na comunicação'}`);
+    } finally {
+      setIsDiscovering(false);
+    }
+  };
+
+  const handleImportSelected = async () => {
+    if (selectedToImport.length === 0 || isImporting) return;
+    setIsImporting(true);
+    try {
+      const targets = discoveredProjects
+        .filter((p) => selectedToImport.includes(p.root_path))
+        .map((p) => ({
+          name: p.name,
+          root_path: p.root_path,
+          default_branch: 'main',
+        }));
+
+      const imported = await api.importAntigravityProjects(targets);
+      if (onProjectsImported) {
+        onProjectsImported(imported);
+      }
+      setIsSyncModalOpen(false);
+    } catch (err: any) {
+      alert(`⚠️ Erro ao importar projetos: ${err.message || 'Falha ao salvar'}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <aside className="w-80 border-r border-[#262a3b] bg-[#12141c] flex flex-col shrink-0">
       {/* Header com Contagem, Botão Novo e Barra de Busca */}
@@ -110,13 +159,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="text-xs font-semibold text-[#8a93a8] uppercase tracking-wider">
             Projetos ({projects.length})
           </span>
-          <button
-            onClick={onOpenNewProject}
-            className="p-1 hover:bg-[#1a1d28] rounded text-[#8a93a8] hover:text-white transition"
-            title="Adicionar Novo Projeto"
-          >
-            <Plus size={15} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleOpenSyncModal}
+              className="p-1 hover:bg-[#1a1d28] rounded text-[#8a93a8] hover:text-purple-400 transition"
+              title="Sincronizar Projetos com Antigravity Desktop"
+            >
+              <RotateCw size={13} />
+            </button>
+            <button
+              onClick={onOpenNewProject}
+              className="p-1 hover:bg-[#1a1d28] rounded text-[#8a93a8] hover:text-white transition"
+              title="Adicionar Novo Projeto"
+            >
+              <Plus size={15} />
+            </button>
+          </div>
         </div>
 
         {/* Input de Filtro Instantâneo para muitos projetos */}
@@ -398,6 +456,124 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Sincronização de Projetos Antigravity */}
+      {isSyncModalOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-[#141620] border border-[#262a3b] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="p-4 border-b border-[#262a3b] flex items-center justify-between bg-[#181a26]">
+              <div className="flex items-center gap-2">
+                <RotateCw size={16} className="text-purple-400" />
+                <h3 className="font-semibold text-sm text-white">Sincronizar Projetos do Antigravity</h3>
+              </div>
+              <button
+                onClick={() => setIsSyncModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-[#222638] transition"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1 space-y-3 custom-scroll">
+              <p className="text-xs text-slate-400">
+                Detectamos workspaces e conversas no seu Antigravity Desktop local. Selecione quais projetos deseja importar para o Agent Orchestrator:
+              </p>
+
+              {isDiscovering ? (
+                <div className="py-10 flex flex-col items-center justify-center gap-2 text-slate-400">
+                  <Loader2 size={24} className="animate-spin text-purple-400" />
+                  <span className="text-xs">Buscando workspaces do Antigravity...</span>
+                </div>
+              ) : discoveredProjects.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-500 border border-dashed border-[#262a3b] rounded-xl">
+                  Nenhum projeto encontrado no Antigravity local.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {discoveredProjects.map((dp) => {
+                    const isSelected = selectedToImport.includes(dp.root_path);
+                    return (
+                      <div
+                        key={dp.root_path}
+                        onClick={() => {
+                          if (dp.already_imported) return;
+                          if (isSelected) {
+                            setSelectedToImport(selectedToImport.filter((p) => p !== dp.root_path));
+                          } else {
+                            setSelectedToImport([...selectedToImport, dp.root_path]);
+                          }
+                        }}
+                        className={`p-3 rounded-xl border transition flex items-center justify-between gap-3 ${
+                          dp.already_imported
+                            ? 'bg-[#10121a]/60 border-[#1f2333] opacity-60 cursor-not-allowed'
+                            : isSelected
+                            ? 'bg-purple-950/20 border-purple-500/50 cursor-pointer shadow-sm'
+                            : 'bg-[#10121a] border-[#222638] hover:border-slate-600 cursor-pointer'
+                        }`}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <Folder size={14} className={dp.already_imported ? 'text-slate-500' : isSelected ? 'text-purple-400' : 'text-slate-400'} />
+                            <span className="text-xs font-semibold text-white truncate">{dp.name}</span>
+                            {dp.already_imported && (
+                              <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-medium">
+                                Já importado
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono truncate mt-0.5">
+                            {dp.root_path}
+                          </div>
+                        </div>
+
+                        {!dp.already_imported && (
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}} // handled by row click
+                            className="rounded border-slate-700 text-purple-600 focus:ring-0 bg-[#090a0f] cursor-pointer"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="p-3.5 border-t border-[#262a3b] bg-[#181a26] flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">
+                {selectedToImport.length} selecionado(s) para importar
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isImporting}
+                  onClick={() => setIsSyncModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-[#222638] transition disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={isImporting || selectedToImport.length === 0}
+                  onClick={handleImportSelected}
+                  className="px-4 py-1.5 rounded-lg text-xs font-medium bg-purple-600 hover:bg-purple-500 text-white transition flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+                >
+                  {isImporting ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin" />
+                      Importando...
+                    </>
+                  ) : (
+                    'Importar Selecionados'
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

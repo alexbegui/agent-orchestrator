@@ -41,6 +41,20 @@ export const api = {
     return handleResponse<Project>(res);
   },
 
+  async discoverAntigravityProjects(): Promise<Array<{ name: string; root_path: string; antigravity_project_id: string; already_imported: boolean }>> {
+    const res = await fetch(`${BASE_URL}/projects/antigravity/discover`);
+    return handleResponse(res);
+  },
+
+  async importAntigravityProjects(projects: Array<{ name: string; root_path: string; default_branch?: string }>): Promise<Project[]> {
+    const res = await fetch(`${BASE_URL}/projects/antigravity/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projects }),
+    });
+    return handleResponse<Project[]>(res);
+  },
+
   /** Inicia o serviço do projeto desacoplado. */
   async startProjectService(projectId: string, command?: string): Promise<{ is_running: boolean; pid: number; command: string }> {
     const res = await fetch(`${BASE_URL}/projects/${projectId}/start`, {

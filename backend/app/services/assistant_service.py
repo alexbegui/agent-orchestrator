@@ -762,10 +762,32 @@ class AssistantService:
             else:
                 target_project_id = str(uuid.uuid4())
 
+            # Atualiza colunas estruturadas
             c.execute(
-                "UPDATE conversation_summaries SET workspace_uris = ?, project_id = ? WHERE conversation_id = ?",
-                (target_workspace_json, target_project_id, conv_id)
+                "SELECT raw_summary, project_id, workspace_uris FROM conversation_summaries WHERE conversation_id = ?",
+                (conv_id,)
             )
+            curr = c.fetchone()
+            new_blob = None
+            if curr and curr[0]:
+                raw_blob = curr[0]
+                old_pid = (curr[1] or "").encode("utf-8")
+                new_pid = target_project_id.encode("utf-8")
+                # Substitui ocorrências de project_id antigo se forem do mesmo tamanho (UUIDs padrão 36 chars)
+                if old_pid and len(old_pid) == len(new_pid) and old_pid in raw_blob:
+                    new_blob = raw_blob.replace(old_pid, new_pid)
+
+            if new_blob is not None:
+                c.execute(
+                    "UPDATE conversation_summaries SET workspace_uris = ?, project_id = ?, raw_summary = ? WHERE conversation_id = ?",
+                    (target_workspace_json, target_project_id, new_blob, conv_id)
+                )
+            else:
+                c.execute(
+                    "UPDATE conversation_summaries SET workspace_uris = ?, project_id = ? WHERE conversation_id = ?",
+                    (target_workspace_json, target_project_id, conv_id)
+                )
+
             conn.commit()
             conn.close()
             logger.info(f"[Antigravity] Conversa {conv_id} vinculada ao workspace {uri} (project_id={target_project_id})")
@@ -840,7 +862,9 @@ class AssistantService:
                 f"Mensagem do usuário: {user_message}"
             )
             escaped_prompt = full_prompt.replace('"', '\\"').replace("\n", " ")
-            escaped_title = f"{project_name} - {task_title}".replace('"', '').replace("\n", " ")[:60]
+            clean_proj = (project_name or "Projeto").strip()
+            clean_title = (task_title or "Tarefa").strip()
+            escaped_title = f"[{clean_proj}] {clean_title}".replace('"', '').replace("\n", " ")[:60]
 
             cmd = f'"{agentapi_cmd}" new-conversation --model=flash --title="{escaped_title}" "{escaped_prompt}"'
             proc = await asyncio.create_subprocess_shell(
@@ -856,8 +880,12 @@ class AssistantService:
                 if new_conv_id:
                     if task_id:
                         self._task_conversations[task_id] = new_conv_id
+                    # Vincula de imediato
                     self.ensure_conversation_workspace(new_conv_id, project_root)
-                    return await self._wait_for_transcript_reply(new_conv_id, 0)
+                    reply = await self._wait_for_transcript_reply(new_conv_id, 0)
+                    # Re-vincula ao término para garantir que atualizações de metadados da IDE não sobrescrevam
+                    self.ensure_conversation_workspace(new_conv_id, project_root)
+                    return reply
             except Exception as e:
                 logger.error(f"Falha ao interpretar retorno do new-conversation: {e}")
             return None
@@ -1368,6 +1396,119 @@ class AssistantService:
         return messages
 
 
+    def discover_antigravity_projects(self) -> List[Dict[str, str]]:
+        """
+        Descobre todos os projetos / workspaces configurados no Antigravity local.
+        Examina:
+        1. conversation_summaries.db (workspaces onde já há conversas)
+        2. state.vscdb (workspaces da sidebar gravados no cache do VS Code / Antigravity)
+        """
+        import urllib.parse
+        discovered: Dict[str, Dict[str, str]] = {}
+
+        # 1. Fonte: conversation_summaries.db
+        db_path = os.path.expanduser("~/.gemini/antigravity/conversation_summaries.db")
+        if os.path.exists(db_path):
+            try:
+                with sqlite3.connect(db_path, timeout=5.0) as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT workspace_uris, project_id, title FROM conversation_summaries "
+                        "WHERE workspace_uris IS NOT NULL AND workspace_uris != '' "
+                        "GROUP BY workspace_uris"
+                    )
+                    for row in cur.fetchall():
+                        w_json = row[0]
+                        pid = row[1]
+                        if not w_json:
+                            continue
+                        try:
+                            parsed = json.loads(w_json) if isinstance(w_json, str) else []
+                            for u in parsed:
+                                if not u.startswith("file:///"):
+                                    continue
+                                raw_path = urllib.parse.unquote(u.replace("file:///", ""))
+                                norm_path = os.path.normpath(raw_path)
+                                name = os.path.basename(norm_path.rstrip("/\\")) or "Projeto"
+                                if norm_path not in discovered:
+                                    discovered[norm_path] = {
+                                        "name": name,
+                                        "root_path": norm_path,
+                                        "antigravity_project_id": pid or "",
+                                        "uri": u
+                                    }
+                        except Exception:
+                            continue
+            except Exception as e:
+                logger.warning(f"Erro ao ler workspaces do conversation_summaries.db: {e}")
+
+        # 2. Fonte: state.vscdb (sidebar workspaces do Antigravity)
+        vscdb_path = os.path.expanduser("~/AppData/Roaming/Antigravity/User/globalStorage/state.vscdb")
+        if os.path.exists(vscdb_path):
+            try:
+                import base64
+                with sqlite3.connect(vscdb_path, timeout=5.0) as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT value FROM ItemTable WHERE key = 'antigravityUnifiedStateSync.sidebarWorkspaces'"
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        raw = base64.b64decode(row[0])
+                        import re
+                        matches = re.findall(rb'file:///[^\x00-\x1f\x7f-\xff]+', raw)
+                        for m in matches:
+                            u = m.decode("utf-8", errors="ignore")
+                            raw_path = urllib.parse.unquote(u.replace("file:///", ""))
+                            norm_path = os.path.normpath(raw_path)
+                            name = os.path.basename(norm_path.rstrip("/\\")) or "Projeto"
+                            if norm_path not in discovered:
+                                discovered[norm_path] = {
+                                    "name": name,
+                                    "root_path": norm_path,
+                                    "antigravity_project_id": "",
+                                    "uri": u
+                                }
+            except Exception as e:
+                logger.warning(f"Erro ao ler workspaces do state.vscdb: {e}")
+
+        return list(discovered.values())
+
+    def register_project_in_antigravity(self, name: str, root_path: str) -> Optional[str]:
+        """
+        Pré-registra um workspace do Orchestrator no Antigravity, garantindo que
+        exista um project_id mapeado para o workspace_uris no conversation_summaries.db.
+        """
+        if not root_path:
+            return None
+        try:
+            drive, rest = os.path.splitdrive(os.path.abspath(root_path))
+            uri = "file:///" + drive.lower().replace(":", "%3A") + rest.replace(os.sep, "/")
+            target_workspace_json = json.dumps([uri])
+
+            db_path = os.path.expanduser("~/.gemini/antigravity/conversation_summaries.db")
+            if not os.path.exists(db_path):
+                return None
+
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT project_id FROM conversation_summaries WHERE workspace_uris = ? AND project_id != 'outside-of-project' AND project_id != '' LIMIT 1",
+                    (target_workspace_json,)
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    return row[0]
+
+                # Se ainda não existe, gera um ID e reserva
+                target_project_id = str(uuid.uuid4())
+                return target_project_id
+        except Exception as e:
+            logger.warning(f"Erro ao registrar projeto no Antigravity: {e}")
+            return None
+
+
 assistant_service = AssistantService()
+
 
 

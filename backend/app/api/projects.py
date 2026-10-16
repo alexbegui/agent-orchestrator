@@ -9,6 +9,7 @@ from app.models.project import Project
 from app.models.task import Task
 from app.services.terminal_service import terminal_service
 from app.services.project_service_runner import project_service_runner
+from app.services.assistant_service import assistant_service
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -100,7 +101,82 @@ def create_project(data: ProjectCreate, db: Session = Depends(get_db)):
     db.add(proj)
     db.commit()
     db.refresh(proj)
+
+    # Garante que o projeto passe a existir também no Antigravity
+    try:
+        assistant_service.register_project_in_antigravity(proj.name, proj.root_path)
+    except Exception:
+        pass
+
     return _enrich_project_response(proj, active_count=0)
+
+
+class AntigravityDiscoveredProject(BaseModel):
+    name: str
+    root_path: str
+    antigravity_project_id: str
+    already_imported: bool = False
+
+
+@router.get("/antigravity/discover", response_model=List[AntigravityDiscoveredProject])
+def discover_antigravity_projects(db: Session = Depends(get_db)):
+    """Descobre projetos configurados no Antigravity (sidebar / conversation_summaries)."""
+    discovered = assistant_service.discover_antigravity_projects()
+    existing_paths = {os.path.normpath(p.root_path).lower() for p in db.query(Project).all()}
+    
+    results = []
+    for item in discovered:
+        norm = os.path.normpath(item["root_path"]).lower()
+        results.append(AntigravityDiscoveredProject(
+            name=item["name"],
+            root_path=item["root_path"],
+            antigravity_project_id=item.get("antigravity_project_id", ""),
+            already_imported=norm in existing_paths
+        ))
+    return results
+
+
+class ImportAntigravityProjectsRequest(BaseModel):
+    projects: List[ProjectCreate]
+
+
+@router.post("/antigravity/import", response_model=List[ProjectResponse])
+def import_antigravity_projects(data: ImportAntigravityProjectsRequest, db: Session = Depends(get_db)):
+    """Importa em lote projetos descobertos no Antigravity para o Orchestrator."""
+    imported = []
+    existing_paths = {os.path.normpath(p.root_path).lower() for p in db.query(Project).all()}
+
+    for item in data.projects:
+        norm_path = os.path.abspath(item.root_path)
+        if norm_path.lower() in existing_paths:
+            continue
+
+        if not os.path.isdir(norm_path):
+            try:
+                os.makedirs(norm_path, exist_ok=True)
+            except Exception:
+                pass
+
+        proj = Project(
+            name=item.name,
+            root_path=norm_path,
+            default_branch=item.default_branch or "main",
+            dev_command=item.dev_command.strip() if item.dev_command and item.dev_command.strip() else None
+        )
+        db.add(proj)
+        db.commit()
+        db.refresh(proj)
+        existing_paths.add(norm_path.lower())
+
+        try:
+            assistant_service.register_project_in_antigravity(proj.name, proj.root_path)
+        except Exception:
+            pass
+
+        imported.append(_enrich_project_response(proj, active_count=0))
+
+    return imported
+
 
 
 class ProjectUpdate(BaseModel):

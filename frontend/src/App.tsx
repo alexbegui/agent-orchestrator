@@ -480,6 +480,12 @@ export default function App() {
           onSelectProject={(id) => setActiveProjectId(id)}
           onOpenNewProject={() => setIsNewProjectModalOpen(true)}
           onProjectUpdated={handleProjectUpdated}
+          onProjectsImported={(imported) => {
+            loadProjects();
+            if (imported.length > 0 && !activeProjectId) {
+              setActiveProjectId(imported[0].id);
+            }
+          }}
         />
 
         <main className="flex-1 overflow-x-auto p-5 custom-scroll bg-[#090a0f]">
